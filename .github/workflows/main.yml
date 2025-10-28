@@ -1,0 +1,63 @@
+name: Build and Release
+
+# This tells GitHub to run this only when you create a tag starting with 'v'
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.7' # Or your Python version
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pyinstaller Pillow PyQt6 requests schedule
+
+      - name: Run PyInstaller build
+        run: |
+          pyinstaller --onefile --windowed -n "CanvasNotionSync" -i="icon.png" --add-data="icon.png;." --add-data="doer_logo.png;." --add-data="Figtree-VariableFont_wght.ttf;." CanvasAssignments.py
+
+      - name: Upload Windows Artifact (EXE)
+        uses: actions/upload-artifact@v4
+        with:
+          name: CanvasNotionSync-Windows
+          path: dist/CanvasNotionSync.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.7' # Or your Python version
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pyinstaller Pillow PyQt6 requests schedule
+
+      - name: Run PyInstaller build
+        run: |
+          pyinstaller --onefile --windowed -n "CanvasNotionSync" -i="icon.png" --add-data="icon.png:." --add-data="doer_logo.png:." --add-data="Figtree-VariableFont_wght.ttf:." CanvasAssignments.py
+
+      - name: Zip the .app file
+        run: zip -r CanvasNotionSync-macOS.zip dist/CanvasNotionSync.app
+
+      - name: Upload macOS Artifact (APP)
+        uses: actions/upload-artifact@v4
+        with:
+          name: CanvasNotionSync-macOS
+          path: CanvasNotionSync-macOS.zip
