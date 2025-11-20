@@ -1,3 +1,6 @@
 /.DS_Store
 /credentials.json
 __pycache__/canvas_notion_calendar_db_v1.cpython-313.pyc
+/dist/
+/build/
+NotionSync.spec

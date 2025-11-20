@@ -6,16 +6,70 @@ import time
 import schedule
 import re # Import regex for parsing status messages
 import locale # --- NEW: For language detection ---
+import keyring # --- NEW: For secure credential storage ---
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QDialog,
     QLabel, QLineEdit, QPushButton, QTextEdit, QProgressBar,
-    QSystemTrayIcon, QMenu, QTimeEdit, QCheckBox, QTabWidget, QTabBar
+    QSystemTrayIcon, QMenu, QTimeEdit, QCheckBox, QTabWidget, QTabBar,
+    QComboBox, QGroupBox # --- NEW: Added QComboBox and QGroupBox ---
 )
 from PyQt6.QtGui import QIcon, QAction, QFontDatabase, QPixmap, QPainter, QColor, QPolygonF
-from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTime, QPointF, QSize
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTime, QPointF, QSize, QTimer
 
 # --- MODIFIED: Import the new function ---
-from canvas_notion_calendar_db_v1 import get_canvas_assignments, add_to_notion, ensure_database_properties
+from canvas_notion_calendar_db_v1 import get_canvas_assignments, add_to_notion, ensure_database_properties, get_canvas_courses, get_notion_database_name
+
+# Module purpose:
+# This file implements the PyQt6 UI and application glue for NotionSync.
+# - Collects and persists user settings (in a per-user config path).
+# - Stores API keys securely in the OS keyring.
+# - Starts background worker threads for network operations so the UI stays
+#   responsive. The network-heavy logic lives in canvas_notion_calendar_db_v1.py.
+# - Provides system tray integration and scheduled sync support.
+
+# --- PATHING & RESOURCE HELPERS (NEW) ---
+APP_NAME = "NotionSync"
+
+def resource_path(relative_path):
+    """Return absolute path to a resource file.
+
+    Works in two modes:
+    - Development: resolves relative to this file's directory.
+    - Bundled (PyInstaller): resolves via the `_MEIPASS` temporary folder.
+
+    Use this helper whenever loading images, fonts or other files packaged
+    with the application so paths remain correct across environments.
+    """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        # For development environment
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+def get_safe_paths():
+    """Returns application's data and log paths in a standard, safe location."""
+    if sys.platform == "darwin":
+        app_support_dir = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', APP_NAME)
+    elif sys.platform == "win32":
+        app_support_dir = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), APP_NAME)
+    else: # Linux/Other
+        app_support_dir = os.path.join(os.path.expanduser('~'), '.config', APP_NAME)
+    
+    # Ensure the directory exists
+    os.makedirs(app_support_dir, exist_ok=True)
+    
+    return {
+        "credentials": os.path.join(app_support_dir, "credentials.json"),
+        "log": os.path.join(app_support_dir, 'sync_log.txt')
+    }
+
+SAFE_PATHS = get_safe_paths()
+credentials_file_path = SAFE_PATHS['credentials']
+log_file_path_global = SAFE_PATHS['log'] 
+# --- END OF PATHING & RESOURCE HELPERS ---
+
 
 # --- Language Detection and Translation Strings (Unchanged) ---
 try:
@@ -27,127 +81,18 @@ try:
     else: LANG_CODE = 'en'
 except Exception: LANG_CODE = 'en'
 
-# --- HELP_HTML_EN (Unchanged) ---
-HELP_HTML_EN = """
-<body style='color: #f0f0f0; font-size: 14px;'>
-<h2>How to get your API Keys</h2>
-<p>Follow these steps to get the 3 required keys for the app.</p>
-<hr style='border-color: #555;'>
-<h3>1. Canvas API Key</h3>
-<ol>
-    <li>Log in to Canvas.</li>
-    <li>In the left-hand navigation, click <b>Account</b>, then <b>Settings</b>.</li>
-    <li>Scroll down to the <b>Approved Integrations</b> section.</li>
-    <li>Click the <b>+ New Access Token</b> button.</li>
-    <li>Give it a <b>Purpose</b> (e.g., "Notion Sync") and an <b>Expires</b> date (optional, but recommended).</li>
-    <li>Click <b>Generate Token</b>.</li>
-    <li><b>IMPORTANT:</b> Copy the generated token immediately. You will not be able to see it again.</li>
-    <li>Paste this token into the "Canvas API Key" field.</li>
-</ol>
-<hr style='border-color: #555;'>
-<h3>2. Notion API Key (Integration)</h3>
-<ol>
-    <li>Go to <a style='color: #00aaff;' href='https://www.notion.so/my-integrations'>www.notion.so/my-integrations</a>.</li>
-    <li>Click the <b>+ New integration</b> button.</li>
-    <li>Give it a <b>Name</b> (e.g., "Canvas Sync").</li>
-    <li>Select the <b>Workspace</b> where your database is located.</li>
-    <li>Under <b>Capabilities</b>, make sure it has:
-        <ul>
-            <li><b>Read content</b></li>
-            <li><b>Update content</b></li>
-            <li><b>Insert content</b></li>
-            <li><b>Update database properties</b> (Required)</li>
-        </ul>
-    </li>
-    <li>Click <b>Submit</b>.</li>
-    <li>On the next screen, copy the <b>Internal Integration Token</b> (it starts with <code>secret_...</code>).</li>
-    <li>Paste this token into the "Notion API Key" field.</li>
-</ol>
-<hr style='border-color: #555;'>
-<h3>3. Notion Database ID</h3>
-<ol>
-    <li>Create a new <b>Database - Full page</b> in Notion. You can leave it empty.</li>
-    <li>
-        <b>Share the database with your integration:</b>
-        <ul>
-            <li>Click the <b>...</b> icon in the top-right corner of your database page.</li>
-            <li>Click <b>+ Add connections</b> (or <b>+ Invite</b>).</li>
-            <li>Find and select the integration you created in Step 2 (e.g., "Canvas Sync").</li>
-        </ul>
-    </li>
-    <li>
-        <b>Get the Database ID:</b>
-        <ul>
-            <li>Open your database in the Notion app or in your browser.</li>
-            <li>Copy the <b>full URL</b> from your browser's address bar.</li>
-            <li>Paste the <b>full URL</b> into the "Notion Database ID" field. The app will find the ID for you.</li>
-        </ul>
-    </li>
-    <li><b>That's it!</b> When you run the sync, the app will automatically find your date property (or create one) and add the required properties ('Course' and 'URL') for you.</li>
-</ol>
-</body>
-"""
+def load_html_resource(filename):
+    path = resource_path(filename)
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+    return f"<h1>Error: {filename} not found</h1>"
 
-# --- HELP_HTML_ES (Unchanged) ---
-HELP_HTML_ES = """
-<body style='color: #f0f0f0; font-size: 14px;'>
-<h2>Cómo obtener tus Claves API</h2>
-<p>Sigue estos pasos para obtener las 3 claves requeridas por la aplicación.</p>
-<hr style='border-color: #555;'>
-<h3>1. Clave API de Canvas</h3>
-<ol>
-    <li>Inicia sesión en Canvas.</li>
-    <li>En el menú de navegación izquierdo, haz clic en <b>Cuenta</b>, luego en <b>Configuración</b>.</li>
-    <li>Desplázate hacia abajo hasta la sección <b>Integraciones aprobadas</b>.</li>
-    <li>Haz clic en el botón <b>+ Nuevo Token de Acceso</b>.</li>
-    <li>Asígnale un <b>Propósito</b> (ej. "Sincronizar con Notion") y una fecha de <b>Expiración</b> (opcional, pero recomendado).</li>
-    <li>Haz clic en <b>Generar Token</b>.</li>
-    <li><b>IMPORTANTE:</b> Copia el token generado inmediatamente. No podrás volver a verlo.</li>
-    <li>Pega este token en el campo "Clave API de Canvas".</li>
-</ol>
-<hr style='border-color: #555;'>
-<h3>2. Clave API de Notion (Integración)</h3>
-<ol>
-    <li>Ve a <a style='color: #00aaff;' href='https://www.notion.so/my-integrations'>www.notion.so/my-integrations</a>.</li>
-    <li>Haz clic en el botón <b>+ Nueva integración</b>.</li>
-    <li>Asígnale un <b>Nombre</b> (ej. "Canvas Sync").</li>
-    <li>Selecciona el <b>Espacio de trabajo</b> donde se encuentra tu base de datos.</li>
-    <li>Bajo <b>Capacidades</b>, asegúrate de que tenga permisos para:
-        <ul>
-            <li><b>Leer contenido</b></li>
-            <li><b>Actualizar contenido</b></li>
-            <li><b>Insertar contenido</b></li>
-            <li><b>Actualizar propiedades de base de datos</b> (Requerido)</li>
-        </ul>
-    </li>
-    <li>Haz clic en <b>Enviar</b>.</li>
-    <li>En la siguiente pantalla, copia el <b>Token de Integración Interna</b> (comienza con <code>secret_...</code>).</li>
-    <li>Pega este token en el campo "Clave API de Notion".</li>
-</ol>
-<hr style='border-color: #555;'>
-<h3>3. ID de Base de Datos de Notion</h3>
-<ol>
-    <li>Crea una nueva <b>Base de datos - Página completa</b> en Notion. Puedes dejarla vacía.</li>
-    <li>
-        <b>Comparte la base de datos con tu integración:</b>
-        <ul>
-            <li>Haz clic en el ícono <b>...</b> en la esquina superior derecha de tu página de base de datos.</li>
-            <li>Haz clic en <b>+ Añadir conexiones</b> (o <b>+ Invite</b>).</li>
-            <li>Busca y selecciona la integración que creaste en el Paso 2 (ej. "Canvas Sync").</li>
-        </ul>
-    </li>
-    <li>
-        <b>Obtén el ID de la Base de Datos:</b>
-        <ul>
-            <li>Abre tu base de datos en la app de Notion o en tu navegador.</li>
-            <li>Copia la <b>URL completa</b> de la barra de direcciones de tu navegador.</li>
-            <li>Pega la <b>URL completa</b> en el campo "ID de Base de Datos de Notion". La app extraerá el ID por ti.</li>
-        </ul>
-    </li>
-    <li><b>¡Eso es todo!</b> Cuando ejecutes la sincronización, la app encontrará automáticamente tu propiedad de fecha (o creará una) y añadirá las propiedades requeridas ('Course' y 'URL') por ti.</li>
-</ol>
-</body>
-"""
+# --- HELP_HTML_EN (Loaded from file) ---
+HELP_HTML_EN = load_html_resource("help_en.html")
+
+# --- HELP_HTML_ES (Loaded from file) ---
+HELP_HTML_ES = load_html_resource("help_es.html")
 
 # --- TRANSLATIONS (Unchanged) ---
 TRANSLATIONS = {
@@ -165,7 +110,18 @@ TRANSLATIONS = {
         'tray_show_window': "Show Window", 'tray_quit': "Quit",
         'help_title': "API Key Setup Guide", 'help_close': "Close",
         'help_switch_button': "Ver en Español", 'help_html': HELP_HTML_EN,
-        'easter_egg_title': "Special Thanks!", 'easter_egg_message': "Thank you DOer for using the app"
+        'easter_egg_title': "Special Thanks!", 'easter_egg_message': "Thank you DOer for using the app",
+        # --- NEW TRANSLATIONS ---
+        'canvas_url_label': "Canvas URL:",
+        'use_default_url': "Use Default Institution (Key Institute)",
+        'custom_url_placeholder': "https://canvas.instructure.com/api/v1",
+        'sync_scope_label': "Sync Scope (Buckets):",
+        'bucket_past': "Past", 'bucket_undated': "Undated", 'bucket_upcoming': "Upcoming",
+        'bucket_future': "Future", 'bucket_ungraded': "Ungraded",
+        'notification_success_title': "Sync Successful",
+        'notification_success_msg': "Canvas assignments synced to Notion.",
+        'notification_fail_title': "Sync Failed",
+        'notification_fail_msg': "Error syncing assignments. Check log."
     },
     'es': {
         'window_title': "Sincronización de Canvas a Notion",
@@ -181,12 +137,25 @@ TRANSLATIONS = {
         'tray_show_window': "Mostrar Ventana", 'tray_quit': "Salir",
         'help_title': "Guía de Configuración de Claves API", 'help_close': "Cerrar",
         'help_switch_button': "View in English", 'help_html': HELP_HTML_ES,
-        'easter_egg_title': "¡Gracias Especiales!", 'easter_egg_message': "Gracias DOer por usar la app"
+        'easter_egg_title': "¡Gracias Especiales!", 'easter_egg_message': "Gracias DOer por usar la app",
+        # --- NEW TRANSLATIONS ---
+        'canvas_url_label': "URL de Canvas:",
+        'use_default_url': "Usar Institución Predeterminada (Key Institute)",
+        'custom_url_placeholder': "https://canvas.instructure.com/api/v1",
+        'sync_scope_label': "Alcance de Sincronización (Categorías):",
+        'bucket_past': "Pasado", 'bucket_undated': "Sin Fecha", 'bucket_upcoming': "Próximo",
+        'bucket_future': "Futuro", 'bucket_ungraded': "Sin Calificar",
+        'notification_success_title': "Sincronización Exitosa",
+        'notification_success_msg': "Asignaciones de Canvas sincronizadas con Notion.",
+        'notification_fail_title': "Sincronización Fallida",
+        'notification_fail_msg': "Error al sincronizar. Revisa el registro."
     }
 }
 T = TRANSLATIONS[LANG_CODE]
 
 # --- QSS Stylesheet (Unchanged) ---
+# Application-wide styles (QSS). Keep this separate so the UI theme is
+# consistently applied whether the app is run from source or packaged.
 MODERN_QSS = """
 QWidget {
     background-color: #2b2b2b; color: #f0f0f0;
@@ -221,11 +190,20 @@ QMenu::separator { height: 1px; background: #555; margin: 4px 0px; }
 QTimeEdit { background-color: #3c3f41; border: 1px solid #555; border-radius: 4px; padding: 4px; }
 QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid #555; border-radius: 3px; }
 QCheckBox::indicator:unchecked { background-color: #3c3f41; }
-QCheckBox::indicator:checked { background-color: #0078d7; image: url(icon:checkmark.png); }
+QCheckBox::indicator:checked { background-color: transparent; border: 1px solid #0078d7; image: url(icon:checkmark.png); }
 QTextEdit#HelpText { background-color: #2b2b2b; border: none; padding: 10px; }
 """
 
-# --- EasterEggPopup Class (Unchanged) ---
+# If a bundled `check.png` exists, update the QSS to reference its absolute path
+_check_img_path = resource_path("check.png")
+_check_img_path = _check_img_path.replace("\\", "/")
+# Replace only the image URL portion so background/border edits remain intact
+MODERN_QSS = MODERN_QSS.replace(
+    "image: url(icon:checkmark.png);",
+    "image: url(" + _check_img_path + ");"
+)
+
+# --- EasterEggPopup Class (MODIFIED for resource_path) ---
 class EasterEggPopup(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -239,7 +217,9 @@ class EasterEggPopup(QDialog):
         layout.addWidget(message_label)
         image_label = QLabel()
         image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        image_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "doer_logo.png")
+        
+        # --- FIX: Use resource_path for logo ---
+        image_path = resource_path("doer_logo.png")
         if os.path.exists(image_path):
             pixmap = QPixmap(image_path)
             scaled_pixmap = pixmap.scaled(200, 200, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
@@ -308,20 +288,61 @@ class HelpDialog(QDialog):
         self._update_content()
 
 
-# --- MODIFIED: SyncThread class now handles new schema check ---
+# --- CourseLoaderThread (module-level to avoid Qt meta-object issues) ---
+class CourseLoaderThread(QThread):
+    finished_loading = pyqtSignal(object)
+
+    def __init__(self, key=None, base=None, parent=None):
+        super().__init__(parent)
+        self.key = key
+        self.base = base
+
+    def run(self):
+        try:
+            courses = get_canvas_courses(self.key, self.base)
+        except Exception:
+            courses = []
+        self.finished_loading.emit(courses)
+
+
+# --- DatabaseNameLoaderThread (fetches database title asynchronously) ---
+class DatabaseNameLoaderThread(QThread):
+    finished = pyqtSignal(object)
+
+    def __init__(self, notion_key=None, database_id=None, parent=None):
+        super().__init__(parent)
+        self.notion_key = notion_key
+        self.database_id = database_id
+
+    def run(self):
+        try:
+            name = get_notion_database_name(self.notion_key, self.database_id)
+        except Exception:
+            name = None
+        self.finished.emit(name)
+
+
+# --- SyncThread ---
+# Long-running worker executed in a separate QThread to perform a full
+# synchronization cycle. Signals are used to report status/progress back to
+# the UI so the main thread can remain responsive.
 class SyncThread(QThread):
     update_status = pyqtSignal(str)
     update_progress = pyqtSignal(int)
     # --- NEW: Signal for success ---
     sync_succeeded = pyqtSignal() 
+    sync_failed = pyqtSignal() # --- NEW: Signal for failure ---
     
     # --- MODIFIED: Accept first_sync_complete flag ---
-    def __init__(self, canvas_key: str, notion_key: str, notion_db_id: str, first_sync_complete: bool):
+    def __init__(self, canvas_key: str, notion_key: str, notion_db_id: str, first_sync_complete: bool, base_url: str, buckets: list, selected_course_ids=None):
         super().__init__()
         self.canvas_key = canvas_key
         self.notion_key = notion_key
         self.notion_db_id = notion_db_id
         self.first_sync_complete = first_sync_complete # Store the flag
+        self.base_url = base_url
+        self.buckets = buckets
+        self.selected_course_ids = selected_course_ids
 
     def run(self):
         try:
@@ -336,6 +357,7 @@ class SyncThread(QThread):
                 self.update_status.emit("❌ Database setup failed. Aborting sync.")
                 self.update_status.emit("   Check permissions, Database ID, and API version.")
                 self.update_progress.emit(0)
+                self.sync_failed.emit()
                 return # Stop the sync
             
             self.update_status.emit(f"   Using date property: '{date_property_name}'")
@@ -344,10 +366,12 @@ class SyncThread(QThread):
             self.update_progress.emit(10)
             self.update_status.emit("Fetching assignments from Canvas (concurrently)...")
             
-            assignments = get_canvas_assignments(self.canvas_key, self.update_status.emit)
+            # --- MODIFIED: Pass base_url and buckets ---
+            assignments = get_canvas_assignments(self.canvas_key, self.base_url, self.buckets, self.selected_course_ids, self.update_status.emit)
             if not assignments:
                 self.update_status.emit("No new assignments found or Canvas fetch failed.")
                 self.update_progress.emit(100)
+                self.sync_succeeded.emit() # Consider empty fetch as success? Or maybe just done.
                 return
             self.update_progress.emit(40)
 
@@ -381,14 +405,20 @@ class SyncThread(QThread):
         except Exception as e:
             self.update_status.emit(f"An unexpected error occurred during sync: {e}")
             self.update_progress.emit(0)
+            self.sync_failed.emit()
 
-# --- Main application class (MODIFIED) ---
-class CanvasNotionSyncApp(QWidget):
+# --- Main application class ---
+# `NotionSyncApp` composes the entire GUI, wires widgets to settings,
+# and coordinates background workers (course loader, DB name fetcher, sync).
+# Keep UI code here; delegate API calls to canvas_notion_calendar_db_v1.py.
+class NotionSyncApp(QWidget):
     def __init__(self):
         super().__init__()
         self.lang = LANG_CODE 
-        self.setWindowTitle(T['window_title']); self.resize(640, 500) 
-        self.credentials_file = "credentials.json"
+        self.setWindowTitle(T['window_title']); self.resize(640, 600) 
+        # --- FIX: Use safe, global path ---
+        self.credentials_file = credentials_file_path
+        self.tray_icon = None # Will be assigned later
         self._setup_ui()
         self._load_settings()
 
@@ -396,13 +426,104 @@ class CanvasNotionSyncApp(QWidget):
         event.ignore(); self.hide()
 
     def _save_settings(self, key, value):
+        # Handle sensitive keys with keyring
+        if key in ["canvas_key", "notion_key"]:
+            if value:
+                keyring.set_password(APP_NAME, key, value)
+            else:
+                try:
+                    keyring.delete_password(APP_NAME, key)
+                except keyring.errors.PasswordDeleteError:
+                    pass
+            return
+
         data = {}
         if os.path.exists(self.credentials_file):
             try:
                 with open(self.credentials_file, 'r') as f: data = json.load(f)
             except (json.JSONDecodeError, IOError): pass
+        
+        # Remove sensitive keys from json if they exist (migration)
+        if "canvas_key" in data: del data["canvas_key"]
+        if "notion_key" in data: del data["notion_key"]
+        
         data[key] = value
         with open(self.credentials_file, 'w') as f: json.dump(data, f, indent=4)
+
+    def _load_settings(self):
+        # Load sensitive keys from keyring
+        self.canvas_input.setText(keyring.get_password(APP_NAME, "canvas_key") or "")
+        self.notion_key_input.setText(keyring.get_password(APP_NAME, "notion_key") or "")
+
+        if not os.path.exists(self.credentials_file): return
+        try:
+            with open(self.credentials_file, 'r') as f: data = json.load(f)
+            
+            # Fallback for migration: check json if keyring is empty
+            if not self.canvas_input.text() and "canvas_key" in data:
+                self.canvas_input.setText(data["canvas_key"])
+                # Migrate to keyring
+                keyring.set_password(APP_NAME, "canvas_key", data["canvas_key"])
+            
+            if not self.notion_key_input.text() and "notion_key" in data:
+                self.notion_key_input.setText(data["notion_key"])
+                # Migrate to keyring
+                keyring.set_password(APP_NAME, "notion_key", data["notion_key"])
+
+            self.notion_db_input.setText(data.get("notion_db_id", ""))
+            sync_time_str = data.get('sync_time', "23:59")
+            h, m = map(int, sync_time_str.split(':'))
+            self.time_edit.setTime(QTime(h, m))
+            self.startup_checkbox.setChecked(is_startup_enabled())
+            
+            # Load Canvas URL settings
+            self.use_default_url_cb.setChecked(data.get("use_default_url", True))
+            self.canvas_url_input.setText(data.get("canvas_url", ""))
+            self._toggle_canvas_url_input(self.use_default_url_cb.isChecked())
+            
+            # Load Buckets settings
+            buckets = data.get("buckets", ["past", "undated", "upcoming", "future", "ungraded"])
+            for bucket, cb in self.bucket_checkboxes.items():
+                cb.setChecked(bucket in buckets)
+            # Show warning if buckets is empty
+            try:
+                if not buckets:
+                    self.scope_warning_label.setVisible(True)
+                else:
+                    self.scope_warning_label.setVisible(False)
+            except Exception:
+                pass
+
+            # Load advanced toggle state and show/hide advanced UI
+            show_advanced = data.get("show_advanced", False)
+            try:
+                self.advanced_toggle.setChecked(show_advanced)
+                self._toggle_advanced(show_advanced)
+            except Exception:
+                pass
+
+            # Update course summary label after loading settings
+            try:
+                self._update_course_summary()
+            except Exception:
+                pass
+
+        except Exception: pass
+
+    # --- NEW: Added for crash fix ---
+    def _on_sync_finished(self):
+        """Called when the sync thread is finished."""
+        self.run_button.setEnabled(True)
+        if hasattr(self, 'tray_run_action'):
+            self.tray_run_action.setEnabled(True)
+        if hasattr(self, 'tray_quit_action'):
+            self.tray_quit_action.setEnabled(True)
+
+    # --- NEW: Added for crash fix ---
+    def set_tray_actions(self, run_action, quit_action):
+        """Stores references to tray menu actions to control their state."""
+        self.tray_run_action = run_action
+        self.tray_quit_action = quit_action
 
     # --- NEW: Helper to read a single value ---
     def _load_settings_value(self, key, default=None):
@@ -415,26 +536,83 @@ class CanvasNotionSyncApp(QWidget):
         except Exception: 
             return default
 
-    def _load_settings(self):
-        if not os.path.exists(self.credentials_file): return
-        try:
-            with open(self.credentials_file, 'r') as f: data = json.load(f)
-            self.canvas_input.setText(data.get("canvas_key", ""))
-            self.notion_key_input.setText(data.get("notion_key", ""))
-            self.notion_db_input.setText(data.get("notion_db_id", ""))
-            sync_time_str = data.get('sync_time', "23:59")
-            h, m = map(int, sync_time_str.split(':'))
-            self.time_edit.setTime(QTime(h, m))
-            self.startup_checkbox.setChecked(is_startup_enabled())
-            # self.first_sync_complete = data.get("first_sync_complete", False) # Store this
-        except Exception: pass
-
     # --- NEW: Slot to mark first sync as done ---
     def _mark_first_sync_complete(self):
         # Only mark as complete if it wasn't already
         if not self._load_settings_value("first_sync_complete", False):
             self.status_output.append("Marking first sync as complete.")
             self._save_settings("first_sync_complete", True)
+
+    def _on_sync_success(self):
+        self._mark_first_sync_complete()
+        if self.tray_icon:
+            self.tray_icon.showMessage(T['notification_success_title'], T['notification_success_msg'], QSystemTrayIcon.MessageIcon.Information, 3000)
+
+    def _on_load_courses(self):
+        # Start a small thread to fetch courses and display a dialog for selection
+        canvas_key = self.canvas_input.text().strip()
+        if self.use_default_url_cb.isChecked():
+            base_url = "https://keyinstitute.instructure.com/api/v1"
+        else:
+            base_url = self.canvas_url_input.text().strip()
+
+        if not canvas_key or not base_url:
+            self.status_output.append("Please provide Canvas API key and URL before loading courses.")
+            return
+
+        # Use a module-level QThread worker
+        loader = CourseLoaderThread(key=canvas_key, base=base_url)
+        # keep a reference so it isn't garbage-collected while running
+        self.course_loader_thread = loader
+
+        def on_loaded(courses):
+            if not courses:
+                self.status_output.append("No courses returned from Canvas or fetch failed.")
+                return
+
+            # Build dialog with checkboxes
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Select Courses to Sync")
+            dlg_layout = QVBoxLayout(dlg)
+            scroll_layout = QVBoxLayout()
+            checkbox_map = {}
+
+            saved_selected = set(self._load_settings_value("selected_course_ids", []))
+
+            for c in courses:
+                cid = str(c.get('id'))
+                name = c.get('name') or f"Course {cid}"
+                cb = QCheckBox(name)
+                cb.setChecked((not saved_selected) or (cid in saved_selected))
+                checkbox_map[cid] = cb
+                scroll_layout.addWidget(cb)
+
+            dlg_layout.addLayout(scroll_layout)
+            btn_layout = QHBoxLayout()
+            save_btn = QPushButton("Save")
+            cancel_btn = QPushButton("Cancel")
+            btn_layout.addStretch()
+            btn_layout.addWidget(cancel_btn)
+            btn_layout.addWidget(save_btn)
+            dlg_layout.addLayout(btn_layout)
+
+            def on_save():
+                selected = [cid for cid, cb in checkbox_map.items() if cb.isChecked()]
+                self._save_settings('selected_course_ids', selected)
+                self._update_course_summary()
+                dlg.accept()
+
+            save_btn.clicked.connect(on_save)
+            cancel_btn.clicked.connect(dlg.reject)
+            dlg.exec()
+
+        loader.finished_loading.connect(on_loaded)
+        loader.finished_loading.connect(lambda _: setattr(self, 'course_loader_thread', None))
+        loader.start()
+
+    def _on_sync_fail(self):
+        if self.tray_icon:
+            self.tray_icon.showMessage(T['notification_fail_title'], T['notification_fail_msg'], QSystemTrayIcon.MessageIcon.Warning, 3000)
 
     def _show_help_dialog(self):
         dialog = HelpDialog(lang=self.lang, parent=self) 
@@ -447,6 +625,40 @@ class CanvasNotionSyncApp(QWidget):
             self.notion_db_input.textChanged.disconnect(self._on_notion_input_changed)
             self.notion_db_input.setText(db_id)
             self.notion_db_input.textChanged.connect(self._on_notion_input_changed)
+            text = db_id
+        
+        # Visual validation
+        if re.fullmatch(r"[a-f0-9]{32}", text):
+            self.notion_db_input.setStyleSheet("border: 1px solid #00ff00;")
+            # Start a background lookup for the database title
+            notion_key = self.notion_key_input.text().strip() or keyring.get_password(APP_NAME, "notion_key") or ""
+            if notion_key:
+                loader = DatabaseNameLoaderThread(notion_key=notion_key, database_id=text)
+                self.db_name_thread = loader
+                def _on_db_name(name):
+                    try:
+                        if name:
+                            self.notion_db_name_label.setText(f"Database: {name}")
+                            self.notion_db_name_label.setStyleSheet("color: #a9ffb1; font-size: 12px; margin-top: 4px;")
+                        else:
+                            self.notion_db_name_label.setText("Database: (not found or inaccessible)")
+                            self.notion_db_name_label.setStyleSheet("color: #ffb1b1; font-size: 12px; margin-top: 4px;")
+                    except Exception:
+                        pass
+                    finally:
+                        try:
+                            self.db_name_thread = None
+                        except Exception:
+                            pass
+                loader.finished.connect(_on_db_name)
+                loader.start()
+            else:
+                # No API key available; show hint
+                self.notion_db_name_label.setText("(Enter Notion API key to fetch database name)")
+                self.notion_db_name_label.setStyleSheet("color: #a9a9a9; font-size: 12px; margin-top: 4px;")
+        else:
+            self.notion_db_input.setStyleSheet("")
+            self.notion_db_name_label.setText("")
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -460,10 +672,87 @@ class CanvasNotionSyncApp(QWidget):
         
         credentials_tab = QWidget()
         cred_layout = QVBoxLayout(credentials_tab)
+        
+        # --- Canvas URL Section ---
+        url_layout = QVBoxLayout()
+        url_layout.addWidget(QLabel(T['canvas_url_label']))
+        self.use_default_url_cb = QCheckBox(T['use_default_url'])
+        self.use_default_url_cb.setChecked(True)
+        self.use_default_url_cb.stateChanged.connect(lambda state: self._toggle_canvas_url_input(state == Qt.CheckState.Checked.value))
+        url_layout.addWidget(self.use_default_url_cb)
+        
+        self.canvas_url_input = QLineEdit(placeholderText=T['custom_url_placeholder'])
+        self.canvas_url_input.setVisible(False)
+        url_layout.addWidget(self.canvas_url_input)
+        cred_layout.addLayout(url_layout)
+        
+        # --- Canvas Key Section ---
+        canvas_key_layout = QHBoxLayout()
         self.canvas_input=QLineEdit(placeholderText=T['canvas_key_placeholder'],echoMode=QLineEdit.EchoMode.Password)
+        self.canvas_toggle = QPushButton()
+        self.canvas_toggle.setFixedSize(30, 30)
+        self.canvas_toggle.setCheckable(True)
+        # Load visibility icons if available
+        eye_on_path = resource_path("visibility_icon.png")
+        eye_off_path = resource_path("visibility_off_icon.png")
+        eye_on_icon = QIcon(eye_on_path) if os.path.exists(eye_on_path) else None
+        eye_off_icon = QIcon(eye_off_path) if os.path.exists(eye_off_path) else None
+        def _update_canvas_icon(checked):
+            self.canvas_input.setEchoMode(QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password)
+            if eye_on_icon and eye_off_icon:
+                self.canvas_toggle.setIcon(eye_on_icon if checked else eye_off_icon)
+                self.canvas_toggle.setIconSize(QSize(18,18))
+            else:
+                self.canvas_toggle.setText("Hide" if checked else "Show")
+        self.canvas_toggle.clicked.connect(_update_canvas_icon)
+        # initialize icon/text state
+        _update_canvas_icon(False)
+        canvas_key_layout.addWidget(self.canvas_input)
+        canvas_key_layout.addWidget(self.canvas_toggle)
+        # Load courses button
+        self.load_courses_button = QPushButton("Load Courses")
+        self.load_courses_button.clicked.connect(self._on_load_courses)
+        self.load_courses_button.setToolTip("Fetch Canvas courses and choose which to sync")
+        canvas_key_layout.addWidget(self.load_courses_button)
+        
+        cred_layout.addWidget(QLabel(T['canvas_key_label']))
+        cred_layout.addLayout(canvas_key_layout)
+
+        # --- Notion Key Section ---
+        notion_key_layout = QHBoxLayout()
         self.notion_key_input=QLineEdit(placeholderText=T['notion_key_placeholder'],echoMode=QLineEdit.EchoMode.Password)
+        self.notion_toggle = QPushButton()
+        self.notion_toggle.setFixedSize(30, 30)
+        self.notion_toggle.setCheckable(True)
+        # Reuse icon variables if available
+        def _update_notion_icon(checked):
+            self.notion_key_input.setEchoMode(QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password)
+            if eye_on_icon and eye_off_icon:
+                self.notion_toggle.setIcon(eye_on_icon if checked else eye_off_icon)
+                self.notion_toggle.setIconSize(QSize(18,18))
+            else:
+                self.notion_toggle.setText("Hide" if checked else "Show")
+        self.notion_toggle.clicked.connect(_update_notion_icon)
+        # initialize icon/text state
+        _update_notion_icon(False)
+        notion_key_layout.addWidget(self.notion_key_input)
+        notion_key_layout.addWidget(self.notion_toggle)
+
+        cred_layout.addWidget(QLabel(T['notion_key_label']))
+        cred_layout.addLayout(notion_key_layout)
+        
+        # --- Notion DB Section ---
+        cred_layout.addWidget(QLabel(T['notion_db_label']))
         self.notion_db_input=QLineEdit(placeholderText=T['notion_db_placeholder'])
         self.notion_db_input.textChanged.connect(self._on_notion_input_changed)
+        cred_layout.addWidget(self.notion_db_input)
+        # Label to display the resolved Notion database name (fetched asynchronously)
+        self.notion_db_name_label = QLabel("")
+        self.notion_db_name_label.setStyleSheet("color: #a9a9a9; font-size: 12px; margin-top: 4px;")
+        cred_layout.addWidget(self.notion_db_name_label)
+        # Placeholder for course list summary
+        self.course_summary_label = QLabel("")
+        cred_layout.addWidget(self.course_summary_label)
         
         self.help_button = QPushButton("?")
         self.help_button.setObjectName("HelpButton")
@@ -476,9 +765,6 @@ class CanvasNotionSyncApp(QWidget):
         self.progress_bar=QProgressBar(minimum=0,maximum=100,value=0)
         self.status_output=QTextEdit(readOnly=True)
         
-        cred_layout.addWidget(QLabel(T['canvas_key_label'])); cred_layout.addWidget(self.canvas_input)
-        cred_layout.addWidget(QLabel(T['notion_key_label'])); cred_layout.addWidget(self.notion_key_input)
-        cred_layout.addWidget(QLabel(T['notion_db_label'])); cred_layout.addWidget(self.notion_db_input)
         cred_layout.addSpacing(10)
         cred_layout.addWidget(self.run_button)
         cred_layout.addWidget(self.progress_bar)
@@ -499,17 +785,120 @@ class CanvasNotionSyncApp(QWidget):
         self.startup_checkbox = QCheckBox(T['startup_checkbox'])
         self.startup_checkbox.stateChanged.connect(lambda state: set_startup(state == Qt.CheckState.Checked.value))
         sched_layout.addWidget(self.startup_checkbox)
+        
+        # --- Advanced toggle (hides complex options like Sync Scope) ---
+        self.advanced_toggle = QCheckBox("Show Advanced Settings")
+        self.advanced_toggle.setToolTip("Show advanced configuration options (for experienced users).")
+        self.advanced_toggle.stateChanged.connect(lambda state: self._toggle_advanced(state == Qt.CheckState.Checked.value))
+        sched_layout.addWidget(self.advanced_toggle)
+
+        # --- Sync Scope Section (hidden by default; shown when advanced is enabled) ---
+        scope_group = QGroupBox(T['sync_scope_label'])
+        scope_layout = QVBoxLayout()
+        # Warning shown when user unchecks all buckets (UX: nothing will sync)
+        self.scope_warning_label = QLabel("Warning: If all buckets are unchecked, nothing will sync.")
+        self.scope_warning_label.setStyleSheet("color: #ffd966; background-color: transparent; padding: 6px;")
+        self.scope_warning_label.setWordWrap(True)
+        self.scope_warning_label.setVisible(False)
+        scope_layout.addWidget(self.scope_warning_label)
+        self.bucket_checkboxes = {}
+        buckets = [
+            ('past', T['bucket_past']),
+            ('undated', T['bucket_undated']),
+            ('upcoming', T['bucket_upcoming']),
+            ('future', T['bucket_future']),
+            ('ungraded', T['bucket_ungraded'])
+        ]
+        # (Select All button moved below the checkboxes for better layout)
+
+        for key, label in buckets:
+            cb = QCheckBox(label)
+            cb.setChecked(True) # Default checked
+            cb.stateChanged.connect(self._save_bucket_settings)
+            scope_layout.addWidget(cb)
+            self.bucket_checkboxes[key] = cb
+        # Add Select All button under the checkbox list (left-aligned)
+        bottom_row = QHBoxLayout()
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.setToolTip("Check all buckets")
+        select_all_btn.clicked.connect(lambda: self._select_all_buckets())
+        bottom_row.addWidget(select_all_btn)
+        bottom_row.addStretch()
+        scope_layout.addLayout(bottom_row)
+
+        scope_group.setLayout(scope_layout)
+        # default hidden; may be shown if settings say so
+        scope_group.setVisible(False)
+        self.scope_group = scope_group
+        sched_layout.addWidget(scope_group)
+
         sched_layout.addStretch()
         
         tabs.addTab(credentials_tab, T['tab_credentials'])
         tabs.addTab(scheduler_tab, T['tab_scheduler'])
         main_layout.addWidget(tabs)
 
+    def _toggle_canvas_url_input(self, checked):
+        self.canvas_url_input.setVisible(not checked)
+        self._save_settings("use_default_url", checked)
+
+    def _toggle_advanced(self, checked: bool):
+        # Show or hide advanced settings (sync scope)
+        try:
+            self.scope_group.setVisible(checked)
+        except Exception:
+            pass
+        # Persist the value
+        self._save_settings("show_advanced", bool(checked))
+
+    def _update_course_summary(self):
+        selected = self._load_settings_value("selected_course_ids", [])
+        if selected:
+            self.course_summary_label.setText(f"Selected courses: {len(selected)}")
+        else:
+            self.course_summary_label.setText("")
+
+    def _save_bucket_settings(self):
+        # Save selected buckets. UX note: If the user unchecks all buckets we
+        # show a warning and persist an empty selection. This avoids surprising
+        # behavior from auto-selecting all buckets and makes the effect explicit.
+        buckets = [k for k, cb in self.bucket_checkboxes.items() if cb.isChecked()]
+        if not buckets:
+            try:
+                self.scope_warning_label.setVisible(True)
+            except Exception:
+                pass
+            try:
+                if hasattr(self, 'status_output'):
+                    self.status_output.append("Warning: No sync buckets selected — nothing will be synced.")
+            except Exception:
+                pass
+        else:
+            try:
+                self.scope_warning_label.setVisible(False)
+            except Exception:
+                pass
+
+        self._save_settings("buckets", buckets)
+
+    def _select_all_buckets(self):
+        for k, cb in self.bucket_checkboxes.items():
+            try:
+                cb.setChecked(True)
+            except Exception:
+                pass
+        try:
+            self.scope_warning_label.setVisible(False)
+        except Exception:
+            pass
+        self._save_bucket_settings()
+
     def _on_run_sync(self):
-        cred_data = {
-            "canvas_key": self.canvas_input.text(), 
-            "notion_key": self.notion_key_input.text()
-        }
+        # Save keys to keyring
+        self._save_settings("canvas_key", self.canvas_input.text().strip())
+        self._save_settings("notion_key", self.notion_key_input.text().strip())
+        
+        # Save DB ID
         notion_db_input_text = self.notion_db_input.text().strip()
         match = re.search(r"notion\.so/(?:[^/]+/)?([a-f0-9]{32})", notion_db_input_text)
         if match:
@@ -519,35 +908,56 @@ class CanvasNotionSyncApp(QWidget):
             self.notion_db_input.textChanged.connect(self._on_notion_input_changed)
         else:
             notion_db_id = notion_db_input_text
-
-        cred_data["notion_db_id"] = notion_db_id
+        self._save_settings("notion_db_id", notion_db_id)
         
-        for key, value in cred_data.items(): self._save_settings(key, value.strip())
+        # Get URL
+        if self.use_default_url_cb.isChecked():
+            base_url = "https://keyinstitute.instructure.com/api/v1"
+        else:
+            base_url = self.canvas_url_input.text().strip()
+            self._save_settings("canvas_url", base_url)
         
-        canvas_key=cred_data["canvas_key"].strip()
-        notion_key=cred_data["notion_key"].strip()
+        # Get Buckets
+        buckets = [k for k, cb in self.bucket_checkboxes.items() if cb.isChecked()]
+        
+        canvas_key=self.canvas_input.text().strip()
+        notion_key=self.notion_key_input.text().strip()
         
         if not all([canvas_key,notion_key,notion_db_id]):
             self.status_output.append(T['sync_error_all_fields'])
             return
-        self.run_button.setEnabled(False);self.status_output.clear();self.progress_bar.setValue(0)
+            
+        self.run_button.setEnabled(False)
+        self.status_output.clear()
+        self.progress_bar.setValue(0)
+        
+        # --- MODIFIED: Disable tray actions for crash fix ---
+        if hasattr(self, 'tray_run_action'):
+            self.tray_run_action.setEnabled(False)
+        if hasattr(self, 'tray_quit_action'):
+            self.tray_quit_action.setEnabled(False)
+        # --- END OF MODIFICATION ---
         
         # --- MODIFIED: Load flag and pass to thread ---
         first_sync_complete = self._load_settings_value("first_sync_complete", False)
-        
-        self.sync_thread=SyncThread(canvas_key,notion_key,notion_db_id, first_sync_complete)
+        # Load selected course ids
+        selected_course_ids = self._load_settings_value("selected_course_ids", [])
+
+        self.sync_thread=SyncThread(canvas_key,notion_key,notion_db_id, first_sync_complete, base_url, buckets, selected_course_ids)
         
         self.sync_thread.update_status.connect(self.status_output.append)
         self.sync_thread.update_progress.connect(self.progress_bar.setValue)
-        self.sync_thread.finished.connect(lambda:self.run_button.setEnabled(True))
+        
+        # --- MODIFIED: Connect to new finished slot for crash fix ---
+        self.sync_thread.finished.connect(self._on_sync_finished)
         
         # --- NEW: Connect success signal to mark flag ---
-        self.sync_thread.sync_succeeded.connect(self._mark_first_sync_complete)
+        self.sync_thread.sync_succeeded.connect(self._on_sync_success)
+        self.sync_thread.sync_failed.connect(self._on_sync_fail)
         
         self.sync_thread.start()
 
 # --- Platform-specific and background functions (Unchanged) ---
-APP_NAME = "CanvasNotionSync"
 def get_startup_script_path(): return f'"{sys.executable}" --daemon'
 def set_startup(enable: bool):
     if sys.platform == "win32":
@@ -583,39 +993,71 @@ def is_startup_enabled():
         return os.path.exists(plist_path)
     return False
 
-script_dir = os.path.dirname(os.path.abspath(__file__)); log_file_path = os.path.join(script_dir, 'sync_log.txt'); credentials_file = os.path.join(script_dir, "credentials.json")
+# --- log_message is now using the safe global path ---
 def log_message(message):
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S'); log_entry = f"[{timestamp}] {message}"; print(log_entry)
-    with open(log_file_path, 'a', encoding='utf-8') as f: f.write(log_entry + '\n')
+    with open(log_file_path_global, 'a', encoding='utf-8') as f: f.write(log_entry + '\n')
 
-# --- MODIFIED: Background sync now handles the first_sync_complete flag ---
+# --- MODIFIED: Background sync (Using safe path constants) ---
+def _show_notification(title, message, icon_type):
+    app = QApplication.instance()
+    if app:
+        # We need to keep a reference to the tray icon, otherwise it might be garbage collected
+        # or not show up properly if created temporarily.
+        # However, for a simple notification, creating a new one usually works if the app loop is running.
+        tray = QSystemTrayIcon(QIcon(resource_path("icon.png")), app)
+        tray.show()
+        tray.showMessage(title, message, icon_type, 3000)
+
 def run_background_sync():
     log_message("--- Triggering Scheduled Sync ---")
-    if not os.path.exists(credentials_file): 
+    # --- FIX: Use safe path constant ---
+    if not os.path.exists(credentials_file_path): 
         log_message("ERROR: credentials.json not found."); return
 
     creds = {}
     try:
-        with open(credentials_file, 'r') as f: creds = json.load(f)
+        # --- FIX: Use safe path constant ---
+        with open(credentials_file_path, 'r') as f: creds = json.load(f)
     except (KeyError, json.JSONDecodeError): 
         log_message("ERROR: credentials.json is missing keys or is corrupt.")
         return
 
     try:
-        canvas_key = creds['canvas_key']
-        notion_key = creds['notion_key']
+        # Load keys from keyring
+        canvas_key = keyring.get_password(APP_NAME, "canvas_key")
+        notion_key = keyring.get_password(APP_NAME, "notion_key")
+        
+        if not canvas_key or not notion_key:
+             # Fallback to json if not in keyring (migration edge case)
+             canvas_key = creds.get('canvas_key')
+             notion_key = creds.get('notion_key')
+        
+        if not canvas_key or not notion_key:
+            log_message("ERROR: API keys not found.")
+            return
+
         notion_db_id = creds['notion_db_id']
         # --- NEW: Load the flag ---
         first_sync_complete = creds.get('first_sync_complete', False)
+        
+        # Load new settings
+        base_url = creds.get("canvas_url", "https://keyinstitute.instructure.com/api/v1")
+        if creds.get("use_default_url", True):
+            base_url = "https://keyinstitute.instructure.com/api/v1"
+            
+        buckets = creds.get("buckets", ["past", "undated", "upcoming", "future", "ungraded"])
         
         log_message("Verifying Notion database properties...")
         schema_ok, date_property_name = ensure_database_properties(notion_key, notion_db_id, log_message)
         if not schema_ok:
             log_message("❌ Database setup failed. Aborting scheduled sync.")
+            _show_notification(T['notification_fail_title'], T['notification_fail_msg'], QSystemTrayIcon.MessageIcon.Warning)
             return # Stop the sync
         log_message(f"   Using date property: '{date_property_name}'")
         
-        assignments = get_canvas_assignments(canvas_key, log_message)
+        selected_course_ids = creds.get('selected_course_ids', [])
+        assignments = get_canvas_assignments(canvas_key, base_url, buckets, selected_course_ids, log_message)
         
         # --- MODIFIED: Pass is_first_sync flag ---
         add_to_notion(
@@ -628,50 +1070,73 @@ def run_background_sync():
         )
         
         log_message("--- Scheduled Sync Finished ---")
+        _show_notification(T['notification_success_title'], T['notification_success_msg'], QSystemTrayIcon.MessageIcon.Information)
 
         # --- NEW: Save the flag if this was the first sync ---
         if not first_sync_complete:
             log_message("Marking first sync as complete.")
             creds["first_sync_complete"] = True
-            with open(credentials_file, 'w') as f: 
+            # --- FIX: Use safe path constant ---
+            with open(credentials_file_path, 'w') as f: 
                 json.dump(creds, f, indent=4)
 
     except Exception as e: 
         log_message(f"An error occurred during scheduled sync: {e}")
+        _show_notification(T['notification_fail_title'], f"{T['notification_fail_msg']} {e}", QSystemTrayIcon.MessageIcon.Warning)
 
 def start_scheduler_daemon():
+    # Create QApplication to support QSystemTrayIcon
+    app = QApplication(sys.argv)
+    
     sync_time = "23:59"
-    if os.path.exists(credentials_file):
+    # --- FIX: Use safe path constant ---
+    if os.path.exists(credentials_file_path):
         try:
-            with open(credentials_file, 'r') as f: creds = json.load(f); sync_time = creds.get('sync_time', '23:59')
+            # --- FIX: Use safe path constant ---
+            with open(credentials_file_path, 'r') as f: creds = json.load(f); sync_time = creds.get('sync_time', '23:59')
         except (json.JSONDecodeError, IOError): pass
     log_message(f"Scheduler daemon started. Sync scheduled for {sync_time} daily.")
     schedule.every().day.at(sync_time).do(run_background_sync)
-    while True: schedule.run_pending(); time.sleep(60)
+    
+    # Use QTimer to run schedule.run_pending() periodically
+    timer = QTimer()
+    timer.timeout.connect(schedule.run_pending)
+    timer.start(60000) # Check every minute
+    
+    sys.exit(app.exec())
 
-# --- Main execution block (Unchanged) ---
+# --- Main execution block (MODIFIED for safe path and resources) ---
 if __name__ == "__main__":
     if '--daemon' in sys.argv: start_scheduler_daemon(); sys.exit()
     elif '--background' in sys.argv: run_background_sync(); sys.exit()
     
     app = QApplication(sys.argv)
     
-    font_path = os.path.join(script_dir, "Figtree-VariableFont_wght.ttf")
-    if os.path.exists(font_path): QFontDatabase.addApplicationFont(font_path)
-    else: print("WARNING: Figtree-VariableFont_wght.ttf not found.")
+    # --- FIX: Use resource_path for font file ---
+    font_path = resource_path("Figtree-VariableFont_wght.ttf")
+    if os.path.exists(font_path): 
+        QFontDatabase.addApplicationFont(font_path)
+    else: 
+        print("WARNING: Figtree-VariableFont_wght.ttf not found.")
     
     app.setStyleSheet(MODERN_QSS)
     app.setQuitOnLastWindowClosed(False)
 
-    window = CanvasNotionSyncApp()
-    icon_path = os.path.join(script_dir, "icon.png")
-    if not os.path.exists(icon_path): print("ERROR: icon.png not found!"); sys.exit(1)
+    window = NotionSyncApp()
+    
+    # --- FIX: Use resource_path for icon file ---
+    icon_path = resource_path("icon.png")
+    if not os.path.exists(icon_path): 
+        print("ERROR: icon.png not found!"); sys.exit(1)
     
     tray_icon = QSystemTrayIcon(QIcon(icon_path), parent=app)
     tray_icon.setToolTip(T['tray_tooltip'])
-    menu = QMenu(); run_sync_action = QAction(T['tray_run_sync'], app)
+    menu = QMenu()
+    
+    run_sync_action = QAction(T['tray_run_sync'], app)
     run_sync_action.triggered.connect(window._on_run_sync)
-    menu.addAction(run_sync_action); menu.addSeparator()
+    menu.addAction(run_sync_action)
+    menu.addSeparator()
     
     show_action = QAction(T['tray_show_window'], app)
     show_action.triggered.connect(window.show)
@@ -682,9 +1147,13 @@ if __name__ == "__main__":
     quit_action.triggered.connect(app.quit)
     menu.addAction(quit_action)
     
+    # --- MODIFIED: Pass tray actions to window for crash fix ---
+    window.set_tray_actions(run_sync_action, quit_action)
+    
     tray_icon.setContextMenu(menu)
     tray_icon.show()
     
-    if not os.path.exists(credentials_file): window.show()
+    # --- FIX: Use safe path constant ---
+    if not os.path.exists(credentials_file_path): window.show()
     
     sys.exit(app.exec())

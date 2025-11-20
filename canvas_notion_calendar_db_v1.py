@@ -1,3 +1,19 @@
+"""
+canvas_notion_calendar_db_v1.py
+--------------------------------
+Helpers for interacting with Canvas and Notion APIs.
+
+Responsibilities:
+- Fetch courses and assignments from Canvas (concurrently).
+- Query and mutate a Notion database (pages and properties).
+- Provide small helpers used by the GUI: course list, database schema checks,
+  and a convenience function to read the database title.
+
+This module focuses on IO-bound tasks (HTTP requests). Functions accept an
+optional `status_callback` parameter so callers (GUI or CLI) can receive
+status updates suitable for progress displays or logs.
+"""
+
 import requests
 import datetime
 import json
@@ -5,7 +21,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- HELPER FUNCTION (Unchanged) ---
-def _fetch_assignments_for_course(course, headers, base_url, status_callback):
+def _fetch_assignments_for_course(course, headers, base_url, buckets, status_callback):
     """
     Fetches all assignments from all buckets for a SINGLE course.
     This function is designed to be run in a separate thread.
@@ -15,12 +31,13 @@ def _fetch_assignments_for_course(course, headers, base_url, status_callback):
     if not course_id:
         return []
 
+    # Notify caller that fetching started for this course (optional)
     if status_callback:
         status_callback(f"Starting fetch for course: {course_name}")
 
     assignments_for_course = []
     # These are the different assignment categories we want from Canvas
-    buckets_to_fetch = ["past", "undated", "upcoming", "future", "ungraded"]
+    buckets_to_fetch = buckets if buckets else ["past", "undated", "upcoming", "future", "ungraded"]
 
     for bucket in buckets_to_fetch:
         try:
@@ -37,6 +54,7 @@ def _fetch_assignments_for_course(course, headers, base_url, status_callback):
             if status_callback:
                 status_callback(f"  -> Could not fetch bucket '{bucket}' for {course_name}: {e}")
     
+    # Inform caller when course-level fetching completes (and how many items)
     if status_callback:
         status_callback(f"Finished fetch for {course_name}, found {len(assignments_for_course)} raw assignments.")
 
@@ -44,28 +62,43 @@ def _fetch_assignments_for_course(course, headers, base_url, status_callback):
 
 
 # --- MAIN CANVAS FUNCTION (Unchanged) ---
-def get_canvas_assignments(canvas_key, status_callback=None):
+def get_canvas_assignments(canvas_key, base_url, buckets=None, selected_course_ids=None, status_callback=None):
     """
     Fetch all relevant assignments from Canvas concurrently.
     - Fetches a list of courses.
     - Uses a ThreadPoolExecutor to fetch assignments for all courses in parallel.
     - De-duplicates the final list.
     """
+    # Canvas requests need an Authorization header with the user's token
     headers = {"Authorization": f"Bearer {canvas_key}"}
-    base_url = "https://keyinstitute.instructure.com/api/v1"
+    # base_url is now passed as an argument
     
     try:
+        # 1) Fetch list of courses from Canvas. Caller may provide
+        #    `selected_course_ids` to limit which courses we actually process.
         if status_callback:
             status_callback("Fetching courses from Canvas...")
         courses_resp = requests.get(f"{base_url}/courses", headers=headers, params={"enrollment_state": "active"})
         courses_resp.raise_for_status()
         courses = courses_resp.json()
+        # If caller provided a list of selected_course_ids, filter courses to only those
+        if selected_course_ids:
+            try:
+                selected_set = set(int(x) for x in selected_course_ids)
+                courses = [c for c in courses if int(c.get('id')) in selected_set]
+                if status_callback:
+                    status_callback(f"Filtered courses to {len(courses)} selected courses.")
+            except Exception:
+                # If conversion fails, ignore filtering and proceed with all courses
+                if status_callback:
+                    status_callback("Warning: could not apply course filtering. Proceeding with all courses.")
+        # 2) Fetch assignments for each course concurrently to improve speed
         if status_callback:
             status_callback(f"Found {len(courses)} courses. Fetching assignments concurrently...")
 
         all_assignments_raw = []
         with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_course = {executor.submit(_fetch_assignments_for_course, course, headers, base_url, status_callback): course for course in courses}
+            future_to_course = {executor.submit(_fetch_assignments_for_course, course, headers, base_url, buckets, status_callback): course for course in courses}
             
             for future in as_completed(future_to_course):
                 try:
@@ -76,6 +109,9 @@ def get_canvas_assignments(canvas_key, status_callback=None):
                     if status_callback:
                         status_callback(f"'{course_name}' generated an exception: {exc}")
 
+        # 3) De-duplicate assignments (Canvas may return duplicates across
+        #    different queries). We preserve a simple list of dicts with the
+        #    fields the GUI/Notion code expects.
         if status_callback:
             status_callback("All courses processed. De-duplicating assignments...")
 
@@ -100,6 +136,7 @@ def get_canvas_assignments(canvas_key, status_callback=None):
         return final_assignments
 
     except Exception as e:
+        # For robustness, we notify the caller and return an empty list.
         if status_callback:
             status_callback(f"A critical error occurred while fetching from Canvas: {e}")
         else:
@@ -114,6 +151,7 @@ def _get_all_notion_pages_paginated(database_id, headers, status_callback=None):
     Gets all pages from the database, handling pagination.
     Uses the stable 2022-06-28 API version.
     """
+    # Returns a mapping {page_title: page_id} for every result in the DB.
     pages_map = {}
     next_cursor = None
     url = f"https://api.notion.com/v1/databases/{database_id}/query"
@@ -125,8 +163,12 @@ def _get_all_notion_pages_paginated(database_id, headers, status_callback=None):
             response = requests.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
+            # Iterate each page returned by the Notion query endpoint
             for page in data.get("results", []):
                 try:
+                    # We attempt to read the human-friendly title from the
+                    # 'Name' property; Notion stores titles as an array of
+                    # rich text objects. If present, add to the map.
                     title_property = page.get("properties", {}).get("Name", {}).get("title", [])
                     if title_property:
                         page_title = title_property[0].get("plain_text")
@@ -145,6 +187,62 @@ def _get_all_notion_pages_paginated(database_id, headers, status_callback=None):
             return None
     return pages_map
 
+
+def get_canvas_courses(canvas_key, base_url, status_callback=None):
+    """
+    Fetch list of courses from Canvas. Returns list of course dicts or [] on failure.
+    """
+    headers = {"Authorization": f"Bearer {canvas_key}"}
+    try:
+        if status_callback:
+            status_callback("Fetching courses from Canvas (single-call)...")
+        resp = requests.get(f"{base_url}/courses", headers=headers, params={"enrollment_state": "active", "per_page": 100})
+        resp.raise_for_status()
+        courses = resp.json()
+        if status_callback:
+            status_callback(f"Found {len(courses)} courses.")
+        return courses
+    except requests.exceptions.RequestException as e:
+        if status_callback:
+            status_callback(f"Failed to fetch courses: {e}")
+        return []
+
+
+def get_notion_database_name(notion_key, database_id, status_callback=None):
+    """
+    Given a Notion integration key and a database id, returns the database title (string)
+    or None if it cannot be fetched.
+    """
+    headers = {
+        "Authorization": f"Bearer {notion_key}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    db_url = f"https://api.notion.com/v1/databases/{database_id}"
+    try:
+        resp = requests.get(db_url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        # Title can be an array of rich_text objects under the 'title' key
+        title_field = data.get("title", [])
+        if isinstance(title_field, list) and title_field:
+            # Try common fields
+            first = title_field[0]
+            # rich_text objects often contain 'plain_text' or {'text': {'content': '...'}}
+            title_text = None
+            if isinstance(first, dict):
+                title_text = first.get('plain_text') or (first.get('text') or {}).get('content')
+            if title_text:
+                return title_text
+        # Fallback: the top-level 'name' key may sometimes exist
+        if 'name' in data and isinstance(data['name'], str):
+            return data['name']
+        return None
+    except requests.exceptions.RequestException as e:
+        if status_callback:
+            status_callback(f"Failed to fetch Notion database info: {e}")
+        return None
+
 # --- NEW: Moved truncate_text to be a global helper ---
 def truncate_text(text):
     max_length = 2000
@@ -158,10 +256,14 @@ def _update_page_content(page_id, new_content, headers, status_callback=None):
     Deletes all existing content (child blocks) from a page and adds new content.
     This is a DESTRUCTIVE operation.
     """
+    # This function intentionally removes existing child blocks and replaces
+    # them with a single paragraph. It's destructive but simplifies keeping
+    # page content in sync with Canvas descriptions.
     try:
         blocks_url = f"https://api.notion.com/v1/blocks/{page_id}/children"
         
         # 1. Get all existing blocks
+        # 1) Get existing child blocks (if any)
         get_resp = requests.get(blocks_url, headers=headers)
         
         results = []
@@ -172,7 +274,8 @@ def _update_page_content(page_id, new_content, headers, status_callback=None):
         else:
             get_resp.raise_for_status() # Raise for other errors
         
-        # 2. Delete all existing blocks (sequentially)
+        # 2) Delete all existing blocks (sequentially). Notion doesn't offer
+        #    a bulk-delete endpoint for blocks, so we iterate and delete.
         for block in results:
             block_id = block.get("id")
             if block_id:
@@ -181,7 +284,7 @@ def _update_page_content(page_id, new_content, headers, status_callback=None):
                 if not del_resp.ok:
                     if status_callback: status_callback(f"  -> ⚠️ Could not delete block {block_id}: {del_resp.text}")
         
-        # 3. Add the new content
+        # 3) Add the new content as a single paragraph block
         if new_content:
             new_block_data = {
                 "children": [{
@@ -214,12 +317,16 @@ def add_to_notion(notion_key, database_id, assignments, status_callback, date_pr
     }
     database_id = database_id.strip()
 
+    # Pre-fetch existing pages to avoid creating duplicates and to allow
+    # updating existing pages instead of always inserting.
     if status_callback:
         status_callback("Fetching existing entries from Notion to prevent duplicate checks...")
     
     existing_pages_map = _get_all_notion_pages_paginated(database_id, headers, status_callback)
     
     if existing_pages_map is None:
+        # If we couldn't read the existing pages, abort early — this avoids
+        # creating duplicates or operating blind against the database.
         if status_callback:
              status_callback("❌ Could not pre-fetch Notion pages. Aborting sync.")
         raise Exception("Could not pre-fetch Notion pages. Aborting sync.")
@@ -232,6 +339,7 @@ def add_to_notion(notion_key, database_id, assignments, status_callback, date_pr
             status_callback("   Running subsequent sync: Will skip old entries and preserve descriptions.")
 
 
+    # Helper dates used for skipping stale assignments on non-first syncs
     today = datetime.date.today()
     two_weeks_ago = today - datetime.timedelta(weeks=2)
 
@@ -277,6 +385,8 @@ def add_to_notion(notion_key, database_id, assignments, status_callback, date_pr
                 # This assignment already exists in Notion.
                 
                 # --- MODIFICATION: 2-week check is now conditional ---
+                # If this is not the first sync, skip updating pages older
+                # than two weeks to avoid stomping user-edited content.
                 if not is_first_sync: # Only run check if NOT the first sync
                     if due_date_iso:
                         assignment_date = datetime.date.fromisoformat(due_date_iso)

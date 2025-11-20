@@ -1,0 +1,57 @@
+<body style='color: #f0f0f0; font-size: 14px;'>
+<h2>Cómo obtener tus Claves API</h2>
+<p>Sigue estos pasos para obtener las 3 claves requeridas por la aplicación.</p>
+<hr style='border-color: #555;'>
+<h3>1. Clave API de Canvas</h3>
+<ol>
+    <li>Inicia sesión en Canvas.</li>
+    <li>En el menú de navegación izquierdo, haz clic en <b>Cuenta</b>, luego en <b>Configuración</b>.</li>
+    <li>Desplázate hacia abajo hasta la sección <b>Integraciones aprobadas</b>.</li>
+    <li>Haz clic en el botón <b>+ Nuevo Token de Acceso</b>.</li>
+    <li>Asígnale un <b>Propósito</b> (ej. "Sincronizar con Notion") y una fecha de <b>Expiración</b> (opcional, pero recomendado).</li>
+    <li>Haz clic en <b>Generar Token</b>.</li>
+    <li><b>IMPORTANTE:</b> Copia el token generado inmediatamente. No podrás volver a verlo.</li>
+    <li>Pega este token en el campo "Clave API de Canvas".</li>
+</ol>
+<hr style='border-color: #555;'>
+<h3>2. Clave API de Notion (Integración)</h3>
+<ol>
+    <li>Ve a <a style='color: #00aaff;' href='https://www.notion.so/my-integrations'>www.notion.so/my-integrations</a>.</li>
+    <li>Haz clic en el botón <b>+ Nueva integración</b>.</li>
+    <li>Asígnale un <b>Nombre</b> (ej. "Canvas Sync").</li>
+    <li>Selecciona el <b>Espacio de trabajo</b> donde se encuentra tu base de datos.</li>
+    <li>Bajo <b>Capacidades</b>, asegúrate de que tenga permisos para:
+        <ul>
+            <li><b>Leer contenido</b></li>
+            <li><b>Actualizar contenido</b></li>
+            <li><b>Insertar contenido</b></li>
+            <li><b>Actualizar propiedades de base de datos</b> (Requerido)</li>
+        </ul>
+    </li>
+    <li>Haz clic en <b>Enviar</b>.</li>
+    <li>En la siguiente pantalla, copia el <b>Token de Integración Interna</b> (comienza con <code>secret_...</code>).</li>
+    <li>Pega este token en el campo "Clave API de Notion".</li>
+</ol>
+<hr style='border-color: #555;'>
+<h3>3. ID de Base de Datos de Notion</h3>
+<ol>
+    <li>Crea una nueva <b>Base de datos - Página completa</b> en Notion. Puedes dejarla vacía.</li>
+    <li>
+        <b>Comparte la base de datos con tu integración:</b>
+        <ul>
+            <li>Haz clic en el ícono <b>...</b> en la esquina superior derecha de tu página de base de datos.</li>
+            <li>Haz clic en <b>+ Añadir conexiones</b> (o <b>+ Invite</b>).</li>
+            <li>Busca y selecciona la integración que creaste en el Paso 2 (ej. "Canvas Sync").</li>
+        </ul>
+    </li>
+    <li>
+        <b>Obtén el ID de la Base de Datos:</b>
+        <ul>
+            <li>Abre tu base de datos en la app de Notion o en tu navegador.</li>
+            <li>Copia la <b>URL completa</b> de la barra de direcciones de tu navegador.</li>
+            <li>Pega la <b>URL completa</b> en el campo "ID de Base de Datos de Notion". La app extraerá el ID por ti.</li>
+        </ul>
+    </li>
+    <li><b>¡Eso es todo!</b> Cuando ejecutes la sincronización, la app encontrará automáticamente tu propiedad de fecha (o creará una) y añadirá las propiedades requeridas ('Course' y 'URL') por ti.</li>
+</ol>
+</body>

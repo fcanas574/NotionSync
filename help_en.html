@@ -1,0 +1,57 @@
+<body style='color: #f0f0f0; font-size: 14px;'>
+<h2>How to get your API Keys</h2>
+<p>Follow these steps to get the 3 required keys for the app.</p>
+<hr style='border-color: #555;'>
+<h3>1. Canvas API Key</h3>
+<ol>
+    <li>Log in to Canvas.</li>
+    <li>In the left-hand navigation, click <b>Account</b>, then <b>Settings</b>.</li>
+    <li>Scroll down to the <b>Approved Integrations</b> section.</li>
+    <li>Click the <b>+ New Access Token</b> button.</li>
+    <li>Give it a <b>Purpose</b> (e.g., "Notion Sync") and an <b>Expires</b> date (optional, but recommended).</li>
+    <li>Click <b>Generate Token</b>.</li>
+    <li><b>IMPORTANT:</b> Copy the generated token immediately. You will not be able to see it again.</li>
+    <li>Paste this token into the "Canvas API Key" field.</li>
+</ol>
+<hr style='border-color: #555;'>
+<h3>2. Notion API Key (Integration)</h3>
+<ol>
+    <li>Go to <a style='color: #00aaff;' href='https://www.notion.so/my-integrations'>www.notion.so/my-integrations</a>.</li>
+    <li>Click the <b>+ New integration</b> button.</li>
+    <li>Give it a <b>Name</b> (e.g., "Canvas Sync").</li>
+    <li>Select the <b>Workspace</b> where your database is located.</li>
+    <li>Under <b>Capabilities</b>, make sure it has:
+        <ul>
+            <li><b>Read content</b></li>
+            <li><b>Update content</b></li>
+            <li><b>Insert content</b></li>
+            <li><b>Update database properties</b> (Required)</li>
+        </ul>
+    </li>
+    <li>Click <b>Submit</b>.</li>
+    <li>On the next screen, copy the <b>Internal Integration Token</b> (it starts with <code>secret_...</code>).</li>
+    <li>Paste this token into the "Notion API Key" field.</li>
+</ol>
+<hr style='border-color: #555;'>
+<h3>3. Notion Database ID</h3>
+<ol>
+    <li>Create a new <b>Database - Full page</b> in Notion. You can leave it empty.</li>
+    <li>
+        <b>Share the database with your integration:</b>
+        <ul>
+            <li>Click the <b>...</b> icon in the top-right corner of your database page.</li>
+            <li>Click <b>+ Add connections</b> (or <b>+ Invite</b>).</li>
+            <li>Find and select the integration you created in Step 2 (e.g., "Canvas Sync").</li>
+        </ul>
+    </li>
+    <li>
+        <b>Get the Database ID:</b>
+        <ul>
+            <li>Open your database in the Notion app or in your browser.</li>
+            <li>Copy the <b>full URL</b> from your browser's address bar.</li>
+            <li>Paste the <b>full URL</b> into the "Notion Database ID" field. The app will find the ID for you.</li>
+        </ul>
+    </li>
+    <li><b>That's it!</b> When you run the sync, the app will automatically find your date property (or create one) and add the required properties ('Course' and 'URL') for you.</li>
+</ol>
+</body>
