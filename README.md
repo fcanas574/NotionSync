@@ -1,94 +1,184 @@
 # NotionSync
 
-> Status: Early development. Functionality is limited and subject to rapid change. This README focuses on honesty and clarity until more features are implemented.
+> Status: Early development. Focus: Sync assignments from Canvas (Instructure) courses into one or more Notion databases. This README aims to stay strictly truthful about capabilities.
 
-## Why
-NotionSync is an experiment to build a Python-based tool for reliably pulling (and eventually optionally pushing) structured data from a Notion workspace into local, versionable files. The long‑term intent is reproducible exports for backups, analysis, and developer workflows.
+## Overview
+NotionSync currently targets ONE problem: pulling assignment data from Canvas LMS and reflecting it inside a Notion database so you can manage deadlines in a place you already organize work.
 
-## Project Maturity
-- API design: exploratory
-- Stability: very low
-- Documentation: skeletal
-- Backwards compatibility: NOT guaranteed
+Canvas → Notion flow (pull only):
+1. Call Canvas API for a set of course IDs.
+2. Fetch assignments (optionally filtering by date / published status).
+3. Upsert pages/rows in a Notion database using stable assignment identifiers.
+4. Update changed fields (due date, name, html description stripped to markdown/plain text, points, etc.).
 
-If you find claims in this README that do not match the code, please open an issue—accuracy matters more than marketing right now.
+No data is pushed back to Canvas. Notion edits do NOT change Canvas.
 
-## Current Capabilities (Implemented So Far)
-The following list should reflect ONLY what actually works today. Please edit to match reality:
-- Basic project scaffolding in Python
-- Environment variable loading (e.g., for a Notion API token)
-- (Add/remove items here as features become real)
+## Current Capabilities (Implemented)
+Please adjust this list if something is NOT actually working yet.
+- Fetch assignments from specified Canvas courses using an API token.
+- Create a Notion page/row per assignment if it does not already exist.
+- Update existing Notion entries when assignment metadata changes (e.g., due_at).
+- Store Canvas assignment ID for stable deduplication (prevents duplicates).
+- Basic mapping of properties (e.g., Name, Due Date, Course, Points, URL).
+- Environment-based configuration via `.env` (if implemented in code).
+- Simple logging (INFO/DEBUG levels) (adjust if not present).
 
-Anything not listed here should be assumed NOT implemented yet.
+## Not Yet Implemented (Planned / Aspirational)
+These items are NOT done unless you explicitly add them to Current Capabilities.
+- Sync of assignment state changes (e.g., marking complete automatically).
+- Sync of submissions / grades / score.
+- Sync of modules, announcements, discussions, or syllabus.
+- Deletion or archival of assignments removed from Canvas.
+- Attachments / embedded media fetch & storage.
+- Rate-limit adaptive backoff & caching layer.
+- Push from Notion back to Canvas (no intent short-term).
+- Real-time updates (webhooks) — Canvas webhooks are limited; likely polling only.
 
-## Planned (Not Yet Implemented)
-These are goals—not promises. They will move around as the project evolves:
-- Pull (download) sync of pages and databases into Markdown / JSON
-- Export formatting (Markdown, HTML, JSON)
-- Optional push of edited local Markdown back to Notion
-- Incremental / delta sync & change detection
-- Plugin system for custom exporters / processors
-- CI workflow for scheduled sync (GitHub Actions)
+## Data Mapping (Default Suggestion)
+Canvas Field → Notion Property
+- assignment.id → Number or text property ("Canvas ID")
+- name → Title
+- due_at → Date property (Due)
+- unlock_at / lock_at → Separate date properties (Unlock / Lock) (optional)
+- points_possible → Number (Points)
+- html_url → URL property (Canvas Link)
+- course_id → Select / Relation / Text (Course)
+- submission_types → Multi-select (Submission Types)
+- description (HTML) → Rich text (stripped or lightly converted)
 
-## Getting Started (Minimal)
+> Adjust to match whatever properties you have actually defined in your Notion database.
+
+## Configuration
+Environment variables (proposed — include only those you really use):
+| Variable | Required | Description |
+|----------|----------|-------------|
+| CANVAS_API_TOKEN | Yes | Canvas API token (generate in Canvas account settings). |
+| CANVAS_BASE_URL | Yes | Base Canvas domain, e.g. `https://yourinstitution.instructure.com`. |
+| CANVAS_COURSE_IDS | Yes | Comma-separated list of numeric course IDs to sync. |
+| NOTION_API_TOKEN | Yes | Notion integration secret. Share the target database with this integration. |
+| NOTION_ASSIGNMENTS_DATABASE_ID | Yes | The Notion database ID receiving assignments. |
+| TIMEZONE | No | IANA timezone for localizing dates (default UTC). |
+| DRY_RUN | No | If `true`, performs fetch & logs without writing to Notion. |
+| LOG_LEVEL | No | `DEBUG`, `INFO`, etc. |
+| DATE_RANGE_DAYS | No | Limit assignments to next N days (if filtering implemented). |
+
+Example `.env`:
+```
+CANVAS_API_TOKEN=secret_canvas_xxx
+CANVAS_BASE_URL=https://mycollege.instructure.com
+CANVAS_COURSE_IDS=12345,67890
+NOTION_API_TOKEN=secret_notion_xxx
+NOTION_ASSIGNMENTS_DATABASE_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+LOG_LEVEL=INFO
+DRY_RUN=false
+```
+
+## Installation
 ```bash
-# Clone
 git clone https://github.com/fcanas574/NotionSync.git
 cd NotionSync
-
-# (Optional) create virtual environment
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
-
-# Install dependencies (if/when requirements.txt or pyproject.toml exists)
-pip install -r requirements.txt
+pip install -r requirements.txt  # if exists
 ```
 
-Create a `.env` (if env loading exists):
+## Running (Example Placeholder)
+Replace with the actual entrypoint you implemented (script name / CLI module).
+```bash
+python -m notionsync.canvas_to_notion --config .env
 ```
-NOTION_API_TOKEN=secret_xxx
+Or if a script:
+```bash
+python sync_canvas_assignments.py
+```
+Add flags once they exist:
+```bash
+python sync_canvas_assignments.py --courses 12345 67890 --dry-run
 ```
 
-If the sync CLI or script does not yet exist, this section will be updated once a usable entrypoint is added.
+## Scheduling (Cron Example)
+```cron
+# Pull assignments every morning at 06:10
+10 6 * * * /usr/bin/env bash -c 'cd /path/to/NotionSync && source .venv/bin/activate && python sync_canvas_assignments.py >> canvas-sync.log 2>&1'
+```
 
-## Usage
-(Placeholder) When a CLI command is available, examples will go here. Until then, there is no supported user flow.
+## GitHub Actions (Placeholder Workflow)
+Only add after the script is stable.
+```yaml
+name: Canvas Assignment Sync
+on:
+  schedule:
+    - cron: '15 * * * *'
+  workflow_dispatch:
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+      - name: Run Sync
+        env:
+          CANVAS_API_TOKEN: ${{ secrets.CANVAS_API_TOKEN }}
+          NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
+          CANVAS_BASE_URL: ${{ vars.CANVAS_BASE_URL }}
+          CANVAS_COURSE_IDS: ${{ vars.CANVAS_COURSE_IDS }}
+          NOTION_ASSIGNMENTS_DATABASE_ID: ${{ vars.NOTION_ASSIGNMENTS_DATABASE_ID }}
+        run: |
+          python sync_canvas_assignments.py
+```
+
+## Error Handling & Limitations
+| Symptom | Likely Cause | Suggested Action |
+|---------|--------------|------------------|
+| 401 from Canvas | Invalid/expired token | Regenerate API token. |
+| 404 course | Wrong course ID or insufficient permissions | Verify numeric ID; confirm token access. |
+| Notion write fails | Integration not shared with database | Share database with integration in Notion. |
+| Duplicate pages | Missing unique Canvas ID property check | Ensure assignment ID used as key. |
+| HTML noise in description | No sanitization yet | Strip tags or implement markdown conversion. |
 
 ## Development
 ```bash
-# Run tests (add once tests exist)
-pytest -v
+# (Adjust paths based on actual repo structure)
+pytest -v  # once tests exist
 ```
+Tooling (only list after adopting): black, ruff, mypy, pre-commit.
 
-Code style and tooling will be documented after they are actually configured (e.g., black, ruff, mypy). Avoid adding badges or claims until tooling is in place.
+## Contributing Guidelines (Early Stage)
+- Keep PRs small & focused.
+- Do not add features to README until they are merged & working.
+- Include a brief summary of manual test steps in PR description.
 
-## Contributing
-Right now the best contributions are:
-1. Opening issues that precisely describe bugs or gaps.
-2. Proposing minimal, well-tested incremental improvements.
-3. Suggesting ways to keep feature claims honest.
-
-Feel free to open a PR—but expect churn. Please keep changes small and focused.
-
-## Troubleshooting (Will Expand Later)
-| Symptom | Cause | Action |
-|---------|-------|--------|
-| Import errors | Missing dependencies | Verify and install requirements once defined |
-| No output | Feature not implemented | Check README; open issue if unclear |
-
-## Roadmap Philosophy
-The roadmap here is intentionally lightweight. Items may be dropped if they add complexity without clear user value. Honest pruning is a success, not a failure.
+## Roadmap (Truth-Oriented)
+| Item | Goal | Status |
+|------|------|--------|
+| Core assignment pull | Basic field sync | Working (verify) |
+| Robust field mapping | Add lock/unlock, submission types | Planned |
+| Grade / score sync | Reflect grade & status | Planned |
+| Attachment handling | Download or link files | Planned |
+| Module sync | Mirror Canvas modules | Planned |
+| Delta optimization | Reduce API calls via caching | Planned |
+| Resync removals | Archive removed assignments | Planned |
+| Webhook / near real-time | Faster updates (if feasible) | Investigating |
 
 ## FAQ
-**Is sync working?** Likely only basic scaffolding unless otherwise stated above.
-**Can I rely on this for backups yet?** No—wait for explicit confirmation in the Current Capabilities section.
-**Will you implement push sync?** Possibly, but only after pull is robust.
+**Does it change Canvas data?** No. It only reads Canvas and writes to Notion.
+**Can I edit Notion entries to reschedule assignments?** Yes locally, but those changes will NOT propagate back to Canvas.
+**Why not push back to Canvas?** To avoid accidental grade or date changes; focus is safe read-only automation.
+**Does it track submission state?** Not yet.
+**How are duplicates avoided?** By storing Canvas assignment ID in a dedicated property and updating rather than creating if it exists.
 
 ## License
-License not finalized yet. (Add LICENSE file before declaring.)
+Add a LICENSE file before claiming a license here. (MIT is common if unsure.)
 
 ## Acknowledgments
-Thanks to the Notion API and Python open source ecosystem. More detailed credits will be added once external libraries and patterns solidify.
+- Canvas LMS API
+- Notion API
+- Python ecosystem
 
 ---
-> Reminder: Keep this README aligned with reality. Update "Current Capabilities" before announcing new features anywhere else.
+> Keep this README brutally accurate. Marketing later; truth now.
