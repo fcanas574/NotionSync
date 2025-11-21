@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon, QMenu, QTimeEdit, QCheckBox, QTabWidget, QTabBar,
     QComboBox, QGroupBox # --- NEW: Added QComboBox and QGroupBox ---
 )
-from PyQt6.QtGui import QIcon, QAction, QFontDatabase, QPixmap, QPainter, QColor, QPolygonF
+from PyQt6.QtGui import QIcon, QAction, QFontDatabase, QFont, QPixmap, QPainter, QColor, QPolygonF
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTime, QPointF, QSize, QTimer
 
 # --- MODIFIED: Import the new function ---
@@ -1333,7 +1333,14 @@ def start_scheduler_daemon():
 if __name__ == "__main__":
     if '--daemon' in sys.argv: start_scheduler_daemon(); sys.exit()
     elif '--background' in sys.argv: run_background_sync(); sys.exit()
-    
+
+    # Improve appearance on modern Windows: enable High-DPI scaling and use Fusion style
+    try:
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling, True)
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
     
     # --- FIX: Use resource_path for font file ---
@@ -1343,6 +1350,39 @@ if __name__ == "__main__":
     else: 
         print("WARNING: Figtree-VariableFont_wght.ttf not found.")
     
+    # Prefer the Fusion style for a consistent, modern cross-platform look
+    try:
+        app.setStyle('Fusion')
+    except Exception:
+        pass
+
+    # Apply a complementary dark palette to match MODERN_QSS and avoid Windows 7 visuals
+    try:
+        palette = app.palette()
+        palette.setColor(palette.ColorRole.Window, QColor(43, 43, 43))
+        palette.setColor(palette.ColorRole.WindowText, QColor(240, 240, 240))
+        palette.setColor(palette.ColorRole.Base, QColor(37, 37, 38))
+        palette.setColor(palette.ColorRole.AlternateBase, QColor(60, 63, 65))
+        palette.setColor(palette.ColorRole.ToolTipBase, QColor(240, 240, 240))
+        palette.setColor(palette.ColorRole.ToolTipText, QColor(0, 0, 0))
+        palette.setColor(palette.ColorRole.Text, QColor(240, 240, 240))
+        palette.setColor(palette.ColorRole.Button, QColor(60, 63, 65))
+        palette.setColor(palette.ColorRole.ButtonText, QColor(240, 240, 240))
+        palette.setColor(palette.ColorRole.Highlight, QColor(0, 120, 215))
+        palette.setColor(palette.ColorRole.HighlightedText, QColor(255, 255, 255))
+        app.setPalette(palette)
+    except Exception:
+        pass
+
+    # Set a modern default font (prefer Segoe UI on Windows)
+    try:
+        if sys.platform == 'win32':
+            app.setFont(QFont('Segoe UI', 10))
+        else:
+            app.setFont(QFont('Figtree', 11))
+    except Exception:
+        pass
+
     app.setStyleSheet(MODERN_QSS)
     app.setQuitOnLastWindowClosed(False)
 

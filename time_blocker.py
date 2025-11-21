@@ -31,6 +31,13 @@ import sys
 from datetime import datetime, date, time, timedelta, timezone
 from dateutil import parser as dateparser
 import keyring
+import textwrap
+import re
+try:
+    from colorama import Fore, Style, init as _colorama_init
+    COLORAMA_AVAILABLE = True
+except Exception:
+    COLORAMA_AVAILABLE = False
 
 from canvas_notion_calendar_db_v1 import add_schedule_blocks_to_database
 
@@ -248,6 +255,187 @@ def schedule_blocks(assignments, availability, block_minutes=90, daily_max_minut
     return scheduled
 
 
+def pretty_print_blocks(blocks, limit=10, width=80):
+    """Nicely print scheduled blocks to the console for dry-run output.
+
+    Shows a boxed, human-readable summary for each block including start/end,
+    duration, course, link and a wrapped description.
+    """
+    for b in blocks[:limit]:
+        try:
+            s = dateparser.isoparse(b.get('start')).astimezone().strftime('%Y-%m-%d %H:%M')
+            e = dateparser.isoparse(b.get('end')).astimezone().strftime('%Y-%m-%d %H:%M')
+        except Exception:
+            s = b.get('start') or ''
+            e = b.get('end') or ''
+
+        title = b.get('name') or '<no title>'
+        course = b.get('course') or ''
+        header = f"{title}  [{course}]" if course else title
+
+        print('\u2500' * width)
+        print(header)
+        print(f"{s} → {e}   • {b.get('duration', '?')} min")
+        if b.get('url'):
+            print(f"Link: {b.get('url')}")
+
+        desc = (b.get('description') or '').strip()
+        if desc:
+            print()
+            print(textwrap.fill(desc, width=width))
+    print('\u2500' * width)
+    if len(blocks) > limit:
+        print(f"... and {len(blocks)-limit} more blocks planned")
+
+
+def text_print_blocks(blocks, limit=10, width=80):
+    """Print really plain, human-readable text blocks with simple separators.
+
+    This is intentionally minimal: title, course, start→end, duration, URL,
+    and a wrapped description, separated by blank lines.
+    """
+    def _strip_html(text):
+        if not text:
+            return ''
+        # Remove simple HTML tags
+        clean = re.sub(r'<[^>]+>', '', text)
+        # Collapse whitespace
+        clean = re.sub(r'\s+', ' ', clean).strip()
+        return clean
+
+    def _rel_date_text(dt_str):
+        try:
+            dt = dateparser.isoparse(dt_str).astimezone()
+            today = datetime.now(timezone.utc).astimezone().date()
+            d = dt.date()
+            days = (d - today).days
+            if days < 0:
+                return f"{d.isoformat()} (past)"
+            if days == 0:
+                return f"{d.isoformat()} (today)"
+            if days == 1:
+                return f"{d.isoformat()} (tomorrow)"
+            return f"{d.isoformat()} (in {days} days)"
+        except Exception:
+            return dt_str or ''
+
+    for b in blocks[:limit]:
+        try:
+            s_dt = dateparser.isoparse(b.get('start')).astimezone()
+            e_dt = dateparser.isoparse(b.get('end')).astimezone()
+            s = s_dt.strftime('%Y-%m-%d %H:%M')
+            e = e_dt.strftime('%Y-%m-%d %H:%M')
+        except Exception:
+            s = b.get('start') or ''
+            e = b.get('end') or ''
+
+        title = (b.get('name') or '<no title>').strip()
+        course = (b.get('course') or '').strip()
+        header = f"{title} [{course}]" if course else title
+
+        # Urgency marker if block is within next 2 days
+        urgency = ''
+        try:
+            if s_dt:
+                days_until = (s_dt.date() - datetime.now(timezone.utc).astimezone().date()).days
+                if days_until <= 2:
+                    urgency = ' (!)' 
+        except Exception:
+            pass
+
+        print(f"{header}{urgency}")
+        print(f"Start: {s}    End: {e}    • {b.get('duration', '?')} min")
+        # relative date helpful hint
+        rel = _rel_date_text(b.get('start'))
+        if rel:
+            print(f"When: {rel}")
+
+        if course:
+            print(f"Course: {course}")
+
+        if b.get('url'):
+            print(f"URL: {b.get('url')}")
+
+        desc = _strip_html(b.get('description'))
+        if desc:
+            # truncate long descriptions but show a helpful preview
+            max_chars = 400
+            if len(desc) > max_chars:
+                desc = desc[:max_chars].rsplit(' ', 1)[0] + '...'
+            print()
+            for line in textwrap.wrap(desc, width=width):
+                print(line)
+
+        print('---')
+    if len(blocks) > limit:
+        print(f"... and {len(blocks)-limit} more blocks planned")
+
+
+def modern_print_blocks(blocks, limit=10, width=80):
+    """Print a cleaner, colored output when `colorama` is available.
+
+    Falls back to plain text if colorama isn't present.
+    """
+    use_color = COLORAMA_AVAILABLE
+
+    def col(text, fg=None, bold=False):
+        if not use_color:
+            return text
+        parts = []
+        if fg:
+            parts.append(getattr(Fore, fg.upper(), ''))
+        if bold:
+            parts.append(Style.BRIGHT)
+        parts.append(text)
+        parts.append(Style.RESET_ALL)
+        return ''.join(parts)
+
+    for b in blocks[:limit]:
+        try:
+            s_dt = dateparser.isoparse(b.get('start')).astimezone()
+            e_dt = dateparser.isoparse(b.get('end')).astimezone()
+            s = s_dt.strftime('%a %b %d %H:%M')
+            e = e_dt.strftime('%a %b %d %H:%M')
+        except Exception:
+            s = b.get('start') or ''
+            e = b.get('end') or ''
+
+        title = (b.get('name') or '<no title>').strip()
+        course = (b.get('course') or '').strip()
+
+        header = f"{title} [{course}]" if course else title
+        # urgency
+        urgency = ''
+        try:
+            if s_dt:
+                days_until = (s_dt.date() - datetime.now(timezone.utc).astimezone().date()).days
+                if days_until <= 2:
+                    urgency = col(' (!) ', fg='red', bold=True)
+        except Exception:
+            pass
+
+        print(col(header, fg='cyan', bold=True) + (' ' + urgency if urgency else ''))
+        print(col('When:', fg='green'), f"{s} → {e}", col('•', fg='yellow'), f"{b.get('duration', '?')} min")
+        if course:
+            print(col('Course:', fg='magenta'), course)
+        if b.get('url'):
+            print(col('Link:', fg='blue'), b.get('url'))
+
+        desc = re.sub(r'<[^>]+>', '', (b.get('description') or '')).strip()
+        if desc:
+            max_chars = 500
+            if len(desc) > max_chars:
+                desc = desc[:max_chars].rsplit(' ', 1)[0] + '...'
+            print()
+            for line in textwrap.wrap(desc, width=width):
+                print(line)
+
+        print(col('-' * 40, fg='white'))
+
+    if len(blocks) > limit:
+        print(col(f"... and {len(blocks)-limit} more blocks planned", fg='yellow'))
+
+
 def main():
     p = argparse.ArgumentParser(description='Create study time blocks from assignments JSON')
     p.add_argument('--assignments', '-a', required=True, help='Path to assignments JSON produced by schedule_grabber')
@@ -261,6 +449,7 @@ def main():
     p.add_argument('--out', '-o', help='Output schedule JSON path')
     p.add_argument('--export-notion', action='store_true', help='Export generated blocks to Notion')
     p.add_argument('--database-id', help='Target Notion database id')
+    p.add_argument('--format', '-f', choices=['text', 'pretty', 'modern'], default='text', help='Output format for --dry-run')
     # NOTE: database creation removed. Provide an existing database id via --database-id to export.
     p.add_argument('--dry-run', action='store_true')
     args = p.parse_args()
@@ -300,8 +489,20 @@ def main():
 
     if args.dry_run:
         print(f'Planned {len(blocks)} blocks. Sample:')
-        for b in blocks[:10]:
-            print(json.dumps(b, indent=2))
+        fmt = getattr(args, 'format', 'text')
+        if fmt == 'pretty':
+            pretty_print_blocks(blocks, limit=10, width=80)
+        elif fmt == 'modern':
+            # initialize colorama on Windows
+            if COLORAMA_AVAILABLE:
+                try:
+                    _colorama_init()
+                except Exception:
+                    pass
+            modern_print_blocks(blocks, limit=10, width=80)
+        else:
+            # default: simple plain text
+            text_print_blocks(blocks, limit=10, width=80)
         return
 
     with open(out_path, 'w', encoding='utf-8') as f:
