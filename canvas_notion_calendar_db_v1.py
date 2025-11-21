@@ -119,6 +119,7 @@ def get_canvas_assignments(canvas_key, base_url, buckets=None, selected_course_i
         fetched_assignment_ids = set()
         for assignment in all_assignments_raw:
             if assignment['id'] not in fetched_assignment_ids:
+                # Preserve some Canvas metadata that helps the scheduler
                 final_assignments.append({
                     "name": assignment.get("name", "Unnamed Assignment"),
                     "due_at": assignment.get("due_at"),
@@ -126,7 +127,12 @@ def get_canvas_assignments(canvas_key, base_url, buckets=None, selected_course_i
                     "created_at": assignment.get("created_at"),
                     "description": assignment.get("description", ""),
                     "html_url": assignment.get("html_url", ""),
-                    "course_name": assignment.get("course_name", "Unknown Course")
+                    "course_name": assignment.get("course_name", "Unknown Course"),
+                    # Helpful metadata for priority heuristics
+                    "points_possible": assignment.get("points_possible"),
+                    "submission_types": assignment.get("submission_types"),
+                    "submission_type": assignment.get("submission_type"),
+                    "quiz_id": assignment.get("quiz_id")
                 })
                 fetched_assignment_ids.add(assignment['id'])
 
@@ -149,6 +155,7 @@ def get_canvas_assignments(canvas_key, base_url, buckets=None, selected_course_i
 def _get_all_notion_pages_paginated(database_id, headers, status_callback=None):
     """
     Gets all pages from the database, handling pagination.
+ 
     Uses the stable 2022-06-28 API version.
     """
     # Returns a mapping {page_title: page_id} for every result in the DB.
@@ -244,6 +251,110 @@ def get_notion_database_name(notion_key, database_id, status_callback=None):
         return None
 
 # --- NEW: Moved truncate_text to be a global helper ---
+def create_schedule_database(notion_key, parent_page_id, title="Study Schedule", status_callback=None):
+    """
+    Creates a new Notion database under the provided parent page id.
+    Returns the new database id string on success, or None on failure.
+    Caller must ensure the integration has permission to create children under the parent page.
+    """
+    headers = {
+        "Authorization": f"Bearer {notion_key}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    url = "https://api.notion.com/v1/databases"
+    payload = {
+        "parent": {"type": "page_id", "page_id": parent_page_id},
+        "title": [{"type": "text", "text": {"content": title}}],
+        "properties": {
+            "Name": {"title": {}},
+            "Date": {"date": {}},
+            "Course": {"rich_text": {}},
+            "URL": {"url": {}},
+            "Duration": {"rich_text": {}}
+        }
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        new_db_id = data.get("id")
+        if status_callback:
+            status_callback(f"Created schedule database '{title}' (id={new_db_id})")
+        return new_db_id
+    except requests.exceptions.RequestException as e:
+        if status_callback:
+            try:
+                details = resp.json()
+            except Exception:
+                details = str(e)
+            status_callback(f"Failed to create database: {details}")
+        return None
+
+
+def add_schedule_blocks_to_database(notion_key, database_id, blocks, status_callback=None):
+    """
+    Adds a list of schedule blocks to the specified Notion database.
+    `blocks` should be an iterable of dicts with keys:
+      - name (str), start (ISO datetime), end (ISO datetime), course (opt), url (opt), duration (opt), description (opt)
+    Returns a list of created page ids (or empty list on failure).
+    """
+    headers = {
+        "Authorization": f"Bearer {notion_key}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    # Ensure the database has required properties and get the date property name
+    ok, date_prop = ensure_database_properties(notion_key, database_id, status_callback)
+    if not ok:
+        if status_callback:
+            status_callback("Cannot add schedule blocks: database schema setup failed.")
+        return []
+
+    created_ids = []
+    for b in blocks:
+        try:
+            title = b.get("name") or "Study Block"
+            start = b.get("start")
+            end = b.get("end")
+            course = b.get("course")
+            url = b.get("url")
+            duration = b.get("duration")
+            description = b.get("description", "")
+
+            properties = {
+                "Name": {"title": [{"text": {"content": title}}]},
+                date_prop: {"date": {"start": start, "end": end} if start else None}
+            }
+            if course:
+                properties["Course"] = {"rich_text": [{"text": {"content": course}}]}
+            if url:
+                properties["URL"] = {"url": url}
+            if duration:
+                properties["Duration"] = {"rich_text": [{"text": {"content": str(duration)}}]}
+
+            page_payload = {"parent": {"database_id": database_id}, "properties": properties}
+            if description:
+                page_payload["children"] = [{"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"text": {"content": description}}]}}]
+
+            resp = requests.post("https://api.notion.com/v1/pages", headers=headers, json=page_payload)
+            if resp.ok:
+                page_id = resp.json().get("id")
+                created_ids.append(page_id)
+                if status_callback:
+                    status_callback(f"Added schedule block '{title}' to Notion (page_id={page_id})")
+            else:
+                if status_callback:
+                    try:
+                        details = resp.json()
+                    except Exception:
+                        details = resp.text
+                    status_callback(f"Failed to add block '{title}': {details}")
+        except Exception as e:
+            if status_callback:
+                status_callback(f"Unexpected error adding block '{b.get('name','?')}': {e}")
+    return created_ids
+
 def truncate_text(text):
     max_length = 2000
     if not text:

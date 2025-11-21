@@ -2,3 +2,4 @@ requests
 schedule
 PyQt6
 keyring
+python-dateutil

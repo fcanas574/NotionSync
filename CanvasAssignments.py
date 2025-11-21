@@ -17,7 +17,14 @@ from PyQt6.QtGui import QIcon, QAction, QFontDatabase, QPixmap, QPainter, QColor
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTime, QPointF, QSize, QTimer
 
 # --- MODIFIED: Import the new function ---
-from canvas_notion_calendar_db_v1 import get_canvas_assignments, add_to_notion, ensure_database_properties, get_canvas_courses, get_notion_database_name
+from canvas_notion_calendar_db_v1 import (
+    get_canvas_assignments,
+    add_to_notion,
+    ensure_database_properties,
+    get_canvas_courses,
+    get_notion_database_name,
+    add_schedule_blocks_to_database,
+)
 
 # Module purpose:
 # This file implements the PyQt6 UI and application glue for NotionSync.
@@ -320,6 +327,71 @@ class DatabaseNameLoaderThread(QThread):
         except Exception:
             name = None
         self.finished.emit(name)
+
+
+# --- TimeBlockThread: generate blocks in background to avoid UI freeze ---
+class TimeBlockThread(QThread):
+    finished = pyqtSignal(object, object)  # (blocks, message)
+
+    def __init__(self, canvas_key, base_url, buckets, selected_course_ids, block_minutes, daily_max, availability=None, notion_key=None, notion_db_id=None, export=False, parent=None):
+        super().__init__(parent)
+        self.canvas_key = canvas_key
+        self.base_url = base_url
+        self.buckets = buckets
+        self.selected_course_ids = selected_course_ids
+        self.block_minutes = block_minutes
+        self.daily_max = daily_max
+        self.availability = availability
+        self.notion_key = notion_key
+        self.notion_db_id = notion_db_id
+        self.export = export
+
+    def run(self):
+        try:
+            # Fetch assignments using existing helper
+            assignments_raw = get_canvas_assignments(self.canvas_key, self.base_url, self.buckets, self.selected_course_ids, None)
+
+            # Normalize assignments to the format expected by schedule_blocks
+            normalized = []
+            for a in assignments_raw:
+                due = a.get('due_at') or a.get('lock_at') or a.get('created_at')
+                due_date = None
+                if due:
+                    try:
+                        due_date = due.split('T')[0]
+                    except Exception:
+                        due_date = None
+                normalized.append({
+                    'id': a.get('id'),
+                    'name': a.get('name'),
+                    'due_at': due,
+                    'due_date': due_date,
+                    'course_name': a.get('course_name'),
+                    'description': a.get('description'),
+                    'html_url': a.get('html_url')
+                })
+
+            # Import scheduler function locally to avoid top-level dependency
+            from time_blocker import schedule_blocks
+
+            availability = self.availability or {'weekly': {str(i): [{'start': '18:00', 'end': '21:00'}] for i in range(7)}}
+            blocks = schedule_blocks(normalized, availability, block_minutes=self.block_minutes, daily_max_minutes=self.daily_max)
+
+            # If export requested, push to Notion (must have keys)
+            if self.export:
+                if not (self.notion_key and self.notion_db_id):
+                    self.finished.emit(None, 'Export requested but Notion key or database id missing')
+                    return
+                # Use helper to add blocks
+                created = add_schedule_blocks_to_database(self.notion_key, self.notion_db_id, blocks, status_callback=None)
+                msg = f'Exported {len(created)} blocks to Notion database {self.notion_db_id}'
+                self.finished.emit(blocks, msg)
+                return
+
+            self.finished.emit(blocks, f'Planned {len(blocks)} blocks (dry run)')
+
+        except Exception as e:
+            self.finished.emit(None, f'Error generating blocks: {e}')
 
 
 # --- SyncThread ---
@@ -836,6 +908,68 @@ class NotionSyncApp(QWidget):
         
         tabs.addTab(credentials_tab, T['tab_credentials'])
         tabs.addTab(scheduler_tab, T['tab_scheduler'])
+        # --- Time Blocks Tab (new) ---
+        time_tab = QWidget()
+        time_layout = QVBoxLayout(time_tab)
+        time_layout.addWidget(QLabel("Time Block Generator"))
+
+        hb = QHBoxLayout()
+        hb.addWidget(QLabel("Block length (minutes):"))
+        from PyQt6.QtWidgets import QSpinBox
+        self.block_minutes_spin = QSpinBox()
+        self.block_minutes_spin.setRange(15, 480)
+        self.block_minutes_spin.setValue(90)
+        hb.addWidget(self.block_minutes_spin)
+
+        hb.addWidget(QLabel("Daily max (minutes):"))
+        self.daily_max_spin = QSpinBox()
+        self.daily_max_spin.setRange(0, 1440)
+        self.daily_max_spin.setValue(240)
+        hb.addWidget(self.daily_max_spin)
+
+        time_layout.addLayout(hb)
+
+        # Availability file selector (optional)
+        avail_row = QHBoxLayout()
+        self.avail_path_input = QLineEdit(placeholderText='Optional availability JSON path')
+        avail_row.addWidget(self.avail_path_input)
+        browse_btn = QPushButton('Browse')
+        def _browse_avail():
+            from PyQt6.QtWidgets import QFileDialog
+            path, _ = QFileDialog.getOpenFileName(self, 'Select availability JSON', os.path.expanduser('~'))
+            if path:
+                self.avail_path_input.setText(path)
+        browse_btn.clicked.connect(_browse_avail)
+        avail_row.addWidget(browse_btn)
+        time_layout.addLayout(avail_row)
+
+        # Export options
+        export_row = QHBoxLayout()
+        self.export_checkbox = QCheckBox('Export to Notion')
+        export_row.addWidget(self.export_checkbox)
+        export_row.addWidget(QLabel('Database ID:'))
+        self.export_db_input = QLineEdit()
+        export_row.addWidget(self.export_db_input)
+        # No confirmation checkbox — keep a single Export control for simplicity
+        time_layout.addLayout(export_row)
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        self.generate_blocks_btn = QPushButton('Generate Blocks (Dry Run)')
+        self.generate_blocks_btn.clicked.connect(self._on_generate_blocks)
+        btn_row.addWidget(self.generate_blocks_btn)
+        self.export_confirm_btn = QPushButton('Generate & Export')
+        self.export_confirm_btn.clicked.connect(lambda: self._on_generate_blocks(export=True))
+        # Export button disabled until user opts-in and db id provided
+        self.export_confirm_btn.setEnabled(False)
+        btn_row.addWidget(self.export_confirm_btn)
+        time_layout.addLayout(btn_row)
+
+        # Output preview
+        self.blocks_preview = QTextEdit(readOnly=True)
+        time_layout.addWidget(self.blocks_preview)
+
+        tabs.addTab(time_tab, 'Time Blocks')
         main_layout.addWidget(tabs)
 
     def _toggle_canvas_url_input(self, checked):
@@ -956,6 +1090,96 @@ class NotionSyncApp(QWidget):
         self.sync_thread.sync_failed.connect(self._on_sync_fail)
         
         self.sync_thread.start()
+
+    def _on_generate_blocks(self, export=False):
+        # Disable buttons while running
+        self.generate_blocks_btn.setEnabled(False)
+        self.export_confirm_btn.setEnabled(False)
+
+        canvas_key = self.canvas_input.text().strip() or keyring.get_password(APP_NAME, 'canvas_key')
+        if self.use_default_url_cb.isChecked():
+            base_url = 'https://keyinstitute.instructure.com/api/v1'
+        else:
+            base_url = self.canvas_url_input.text().strip()
+
+        buckets = [k for k, cb in self.bucket_checkboxes.items() if cb.isChecked()]
+        selected_course_ids = self._load_settings_value('selected_course_ids', [])
+
+        block_minutes = int(self.block_minutes_spin.value())
+        daily_max = int(self.daily_max_spin.value()) if self.daily_max_spin.value() > 0 else None
+
+        availability = None
+        avail_path = self.avail_path_input.text().strip()
+        if avail_path and os.path.exists(avail_path):
+            try:
+                with open(avail_path, 'r') as f: availability = json.load(f)
+            except Exception as e:
+                self.status_output.append(f'Could not read availability file: {e}')
+
+        notion_key = self.notion_key_input.text().strip() or keyring.get_password(APP_NAME, 'notion_key')
+        notion_db_id = self.export_db_input.text().strip()
+
+        # If this invocation requested export, ensure the user explicitly checked
+        # the export checkbox and provided a database id.
+        if export:
+            if not self.export_checkbox.isChecked():
+                self.status_output.append('Export not enabled. Please check "Export to Notion".')
+                # Re-enable UI
+                self.generate_blocks_btn.setEnabled(True)
+                self.export_confirm_btn.setEnabled(True)
+                return
+            if not notion_db_id:
+                self.status_output.append('No Notion database id provided. Enter a database id to export.')
+                self.generate_blocks_btn.setEnabled(True)
+                self.export_confirm_btn.setEnabled(True)
+                return
+
+        # Start background worker
+        self.timeblock_thread = TimeBlockThread(canvas_key, base_url, buckets, selected_course_ids, block_minutes, daily_max, availability, notion_key, notion_db_id, export)
+        self.timeblock_thread.finished.connect(self._on_timeblock_finished)
+        self.timeblock_thread.start()
+
+        # Maintain export button enabled state based on user controls
+        try:
+            self.export_checkbox.stateChanged.connect(lambda _: self._update_export_controls())
+            self.export_db_input.textChanged.connect(lambda _: self._update_export_controls())
+        except Exception:
+            pass
+        # Ensure initial state is correct
+        try:
+            self._update_export_controls()
+        except Exception:
+            pass
+
+    def _update_export_controls(self):
+        """Enable the Generate & Export button only when the user opted in and provided a DB id."""
+        try:
+            enabled = False
+            if getattr(self, 'export_checkbox', None):
+                enabled = self.export_checkbox.isChecked() and bool(self.export_db_input.text().strip())
+            self.export_confirm_btn.setEnabled(enabled)
+        except Exception:
+            pass
+
+    def _on_timeblock_finished(self, blocks, message):
+        # Re-enable buttons
+        try:
+            self.generate_blocks_btn.setEnabled(True)
+            self.export_confirm_btn.setEnabled(True)
+        except Exception:
+            pass
+
+        if blocks is None:
+            self.blocks_preview.setPlainText(message)
+            self.status_output.append(message)
+            return
+
+        # Show summary and first few blocks
+        preview = [f"{len(blocks)} blocks planned. {message}\n"]
+        for b in blocks[:10]:
+            preview.append(json.dumps(b, indent=2))
+        self.blocks_preview.setPlainText('\n\n'.join(preview))
+        self.status_output.append(message)
 
 # --- Platform-specific and background functions (Unchanged) ---
 def get_startup_script_path(): return f'"{sys.executable}" --daemon'
