@@ -1,7 +1,5 @@
 requests
 schedule
-PyQt6
-keyring
 python-dateutil
 colorama
-qt-material
+Django>=4.2,<6.0

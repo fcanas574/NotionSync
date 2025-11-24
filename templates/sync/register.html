@@ -1,0 +1,52 @@
+{% extends 'sync/base.html' %}
+
+{% block title %}Register - NotionSync{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 500px; margin: 4rem auto;">
+    <h2>Register</h2>
+    
+    <form method="post">
+        {% csrf_token %}
+        
+        <div class="form-group">
+            <label for="id_username">Username:</label>
+            {{ form.username }}
+            {% if form.username.errors %}
+                <div class="help-text" style="color: #e74c3c;">{{ form.username.errors }}</div>
+            {% endif %}
+            <div class="help-text">{{ form.username.help_text }}</div>
+        </div>
+        
+        <div class="form-group">
+            <label for="id_password1">Password:</label>
+            {{ form.password1 }}
+            {% if form.password1.errors %}
+                <div class="help-text" style="color: #e74c3c;">{{ form.password1.errors }}</div>
+            {% endif %}
+            <div class="help-text">{{ form.password1.help_text }}</div>
+        </div>
+        
+        <div class="form-group">
+            <label for="id_password2">Password confirmation:</label>
+            {{ form.password2 }}
+            {% if form.password2.errors %}
+                <div class="help-text" style="color: #e74c3c;">{{ form.password2.errors }}</div>
+            {% endif %}
+            <div class="help-text">{{ form.password2.help_text }}</div>
+        </div>
+        
+        {% if form.non_field_errors %}
+            <div class="message error">
+                {{ form.non_field_errors }}
+            </div>
+        {% endif %}
+        
+        <button type="submit" class="btn btn-success">Register</button>
+    </form>
+    
+    <p style="margin-top: 1rem;">
+        Already have an account? <a href="{% url 'login' %}">Login here</a>
+    </p>
+</div>
+{% endblock %}

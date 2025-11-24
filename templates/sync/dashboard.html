@@ -1,0 +1,120 @@
+{% extends 'sync/base.html' %}
+
+{% block title %}Dashboard - NotionSync{% endblock %}
+
+{% block content %}
+<h2>Dashboard</h2>
+
+<div class="card">
+    <h3>Canvas to Notion Sync</h3>
+    
+    {% if has_credentials %}
+        <p>Your API credentials are configured. You can run a manual sync below.</p>
+        
+        <button id="sync-btn" class="btn btn-success">Run Manual Sync</button>
+        
+        <div id="sync-status" style="margin-top: 1rem; display: none;">
+            <div id="sync-message"></div>
+        </div>
+    {% else %}
+        <div class="message warning">
+            <strong>Setup Required:</strong> Please configure your API keys in 
+            <a href="{% url 'settings' %}">Settings</a> before running a sync.
+        </div>
+    {% endif %}
+</div>
+
+{% if recent_logs %}
+<div class="card">
+    <h3>Recent Sync History</h3>
+    
+    <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+            <tr style="border-bottom: 2px solid #ddd;">
+                <th style="padding: 0.75rem; text-align: left;">Date/Time</th>
+                <th style="padding: 0.75rem; text-align: left;">Status</th>
+                <th style="padding: 0.75rem; text-align: left;">Assignments</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in recent_logs %}
+            <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 0.75rem;">{{ log.started_at|date:"Y-m-d H:i" }}</td>
+                <td style="padding: 0.75rem;">
+                    {% if log.status == 'success' %}
+                        <span style="color: #27ae60; font-weight: 500;">✓ Success</span>
+                    {% elif log.status == 'failed' %}
+                        <span style="color: #e74c3c; font-weight: 500;">✗ Failed</span>
+                    {% else %}
+                        <span style="color: #f39c12; font-weight: 500;">⟳ Running</span>
+                    {% endif %}
+                </td>
+                <td style="padding: 0.75rem;">{{ log.assignments_synced }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    <p style="margin-top: 1rem;">
+        <a href="{% url 'sync_history' %}">View full history →</a>
+    </p>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const syncBtn = document.getElementById('sync-btn');
+    const syncStatus = document.getElementById('sync-status');
+    const syncMessage = document.getElementById('sync-message');
+    
+    if (syncBtn) {
+        syncBtn.addEventListener('click', function() {
+            syncBtn.disabled = true;
+            syncBtn.textContent = 'Syncing...';
+            syncStatus.style.display = 'block';
+            syncMessage.innerHTML = '<p>Starting sync...</p>';
+            
+            fetch('{% url "run_sync" %}', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                    'Content-Type': 'application/json',
+                },
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    syncMessage.innerHTML = `
+                        <div class="message success">
+                            <strong>Success!</strong> ${data.message}
+                        </div>
+                    `;
+                    // Reload page after 2 seconds to show updated history
+                    setTimeout(() => window.location.reload(), 2000);
+                } else {
+                    syncMessage.innerHTML = `
+                        <div class="message error">
+                            <strong>Error:</strong> ${data.message}
+                        </div>
+                    `;
+                }
+                syncBtn.disabled = false;
+                syncBtn.textContent = 'Run Manual Sync';
+            })
+            .catch(error => {
+                syncMessage.innerHTML = `
+                    <div class="message error">
+                        <strong>Error:</strong> Failed to connect to server.
+                    </div>
+                `;
+                syncBtn.disabled = false;
+                syncBtn.textContent = 'Run Manual Sync';
+            });
+        });
+    }
+});
+</script>
+{% endblock %}
