@@ -4,3 +4,4 @@ PyQt6
 keyring
 python-dateutil
 colorama
+qt-material

@@ -4,3 +4,11 @@ __pycache__/canvas_notion_calendar_db_v1.cpython-313.pyc
 /dist/
 /build/
 NotionSync.spec
+/__pycache__/
+env/
+venv/
+/scripts/
+*.log
+sidebar_capture.gif
+sidebar_edge_positions.txt
+sidebar_width_trace.txt
