@@ -5,9 +5,12 @@ from django.contrib.auth.forms import UserCreationForm, AuthenticationForm
 from django.contrib import messages
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
+from django.utils import timezone
 from .models import UserProfile, SyncLog
 from .services import SyncService
-from datetime import datetime
+
+# Default assignment buckets
+DEFAULT_BUCKETS = ['past', 'undated', 'upcoming', 'future', 'ungraded']
 
 
 def register(request):
@@ -96,7 +99,7 @@ def settings(request):
     
     # Default buckets if none set
     if not profile.sync_buckets:
-        profile.sync_buckets = ['past', 'undated', 'upcoming', 'future', 'ungraded']
+        profile.sync_buckets = DEFAULT_BUCKETS
     
     context = {
         'profile': profile,
@@ -125,7 +128,7 @@ def run_sync(request):
         base_url = profile.canvas_base_url
     
     # Get buckets or use defaults
-    buckets = profile.sync_buckets if profile.sync_buckets else ['past', 'undated', 'upcoming', 'future', 'ungraded']
+    buckets = profile.sync_buckets if profile.sync_buckets else DEFAULT_BUCKETS
     
     # Create sync log
     sync_log = SyncLog.objects.create(user=request.user, status='running')
@@ -148,7 +151,7 @@ def run_sync(request):
     )
     
     # Update sync log
-    sync_log.completed_at = datetime.now()
+    sync_log.completed_at = timezone.now()
     sync_log.status = 'success' if success else 'failed'
     sync_log.message = '\n'.join(status_messages) + '\n' + message
     sync_log.assignments_synced = count

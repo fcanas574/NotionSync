@@ -1,5 +1,15 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
+import re
+
+
+def validate_notion_db_id(value):
+    """Validate that Notion database ID is 32 hex characters."""
+    if value and not re.fullmatch(r'[a-f0-9]{32}', value.lower()):
+        raise ValidationError(
+            'Notion Database ID must be exactly 32 hexadecimal characters'
+        )
 
 
 class UserProfile(models.Model):
@@ -10,6 +20,8 @@ class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     
     # Canvas credentials
+    # NOTE: API keys stored in plain text for simplicity. For production,
+    # consider using django-fernet-fields or similar encryption library.
     canvas_api_key = models.CharField(max_length=255, blank=True, help_text="Canvas API Key")
     canvas_base_url = models.URLField(
         max_length=255, 
@@ -19,8 +31,15 @@ class UserProfile(models.Model):
     use_default_canvas_url = models.BooleanField(default=True)
     
     # Notion credentials
+    # NOTE: API keys stored in plain text for simplicity. For production,
+    # consider using django-fernet-fields or similar encryption library.
     notion_api_key = models.CharField(max_length=255, blank=True, help_text="Notion API Key")
-    notion_database_id = models.CharField(max_length=32, blank=True, help_text="Notion Database ID (32 char hex)")
+    notion_database_id = models.CharField(
+        max_length=32, 
+        blank=True, 
+        validators=[validate_notion_db_id],
+        help_text="Notion Database ID (32 char hex)"
+    )
     
     # Sync settings
     selected_course_ids = models.JSONField(default=list, blank=True, help_text="List of selected Canvas course IDs")
