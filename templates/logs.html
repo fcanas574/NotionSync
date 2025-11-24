@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}Logs - NotionSync{% endblock %}
+
+{% block content %}
+<div class="logs-page">
+    <h2>Sync Logs</h2>
+    
+    <div class="log-viewer">
+        <pre>{{ log_content }}</pre>
+    </div>
+    
+    <div class="form-actions">
+        <a href="{{ url_for('index') }}" class="btn btn-secondary">Back to Dashboard</a>
+    </div>
+</div>
+{% endblock %}

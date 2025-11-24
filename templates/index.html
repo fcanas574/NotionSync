@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - NotionSync{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <h2>Dashboard</h2>
+    
+    <div class="status-card">
+        <h3>Sync Status</h3>
+        <div id="sync-status" class="status-info">
+            <p id="sync-progress">Ready to sync</p>
+            <button id="sync-button" class="btn btn-primary" onclick="startSync()">Run Sync</button>
+        </div>
+        <div id="sync-log" class="log-container" style="display: none;">
+            <h4>Sync Log</h4>
+            <div id="log-entries"></div>
+        </div>
+    </div>
+
+    <div class="info-cards">
+        <div class="info-card">
+            <h3>Quick Info</h3>
+            <p><strong>Canvas URL:</strong> {{ creds.get('canvas_base_url', 'Not set') }}</p>
+            <p><strong>Notion DB ID:</strong> {{ creds.get('notion_database_id', 'Not set')[:20] }}...</p>
+            <p><strong>First Sync:</strong> {{ 'Complete' if creds.get('first_sync_complete') else 'Not yet run' }}</p>
+        </div>
+
+        <div class="info-card">
+            <h3>Quick Links</h3>
+            <ul class="quick-links">
+                <li><a href="{{ url_for('credentials') }}">Update Credentials</a></li>
+                <li><a href="{{ url_for('courses') }}">Select Courses</a></li>
+                <li><a href="{{ url_for('settings') }}">Configure Settings</a></li>
+                <li><a href="{{ url_for('time_blocks') }}">Generate Time Blocks</a></li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let syncInterval = null;
+
+function startSync() {
+    const button = document.getElementById('sync-button');
+    button.disabled = true;
+    button.textContent = 'Syncing...';
+    
+    fetch('/sync', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        document.getElementById('sync-log').style.display = 'block';
+        // Start polling for status
+        syncInterval = setInterval(updateSyncStatus, 1000);
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        button.disabled = false;
+        button.textContent = 'Run Sync';
+        alert('Failed to start sync');
+    });
+}
+
+function updateSyncStatus() {
+    fetch('/sync/status')
+    .then(response => response.json())
+    .then(data => {
+        document.getElementById('sync-progress').textContent = data.progress;
+        
+        // Update log
+        const logEntries = document.getElementById('log-entries');
+        logEntries.innerHTML = data.log.map(entry => `<p>${entry}</p>`).join('');
+        
+        // Check if sync is complete
+        if (!data.running && syncInterval) {
+            clearInterval(syncInterval);
+            syncInterval = null;
+            const button = document.getElementById('sync-button');
+            button.disabled = false;
+            button.textContent = 'Run Sync';
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+    });
+}
+</script>
+{% endblock %}

@@ -1,7 +1,6 @@
 requests
 schedule
-PyQt6
+Flask
 keyring
 python-dateutil
 colorama
-qt-material

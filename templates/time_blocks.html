@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Time Blocks - NotionSync{% endblock %}
+
+{% block content %}
+<div class="time-blocks-page">
+    <h2>Time Block Generator</h2>
+    
+    {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+    
+    {% if message %}
+    <div class="alert alert-success">{{ message }}</div>
+    {% endif %}
+    
+    <form method="POST" class="time-blocks-form">
+        <div class="settings-section">
+            <h3>Block Configuration</h3>
+            
+            <div class="form-group">
+                <label for="block_length">Block Length (minutes)</label>
+                <input type="number" 
+                       id="block_length" 
+                       name="block_length" 
+                       value="60" 
+                       min="15" 
+                       max="240" 
+                       step="15">
+                <small>Duration of each study block</small>
+            </div>
+
+            <div class="form-group">
+                <label for="daily_max">Daily Maximum (minutes)</label>
+                <input type="number" 
+                       id="daily_max" 
+                       name="daily_max" 
+                       value="480" 
+                       min="60" 
+                       max="960" 
+                       step="30">
+                <small>Maximum study time per day</small>
+            </div>
+
+            <div class="form-group">
+                <label for="availability">Availability (JSON, optional)</label>
+                <textarea id="availability" 
+                          name="availability" 
+                          rows="4" 
+                          placeholder='{"Monday": ["09:00-12:00", "14:00-17:00"], ...}'></textarea>
+                <small>Define your available time slots (optional)</small>
+            </div>
+
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" name="export_to_notion" id="export_to_notion">
+                    <span>Export to Notion (uncheck for preview only)</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Generate Time Blocks</button>
+            <a href="{{ url_for('index') }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+
+    {% if blocks %}
+    <div class="blocks-preview">
+        <h3>Generated Time Blocks ({{ blocks|length }})</h3>
+        <div class="blocks-list">
+            {% for block in blocks %}
+            <div class="block-item">
+                <div class="block-header">
+                    <strong>{{ block.title }}</strong>
+                    <span class="block-date">{{ block.date }}</span>
+                </div>
+                <div class="block-details">
+                    <span class="block-time">{{ block.start_time }} - {{ block.end_time }}</span>
+                    <span class="block-duration">{{ block.duration }} minutes</span>
+                </div>
+                {% if block.notes %}
+                <div class="block-notes">{{ block.notes }}</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

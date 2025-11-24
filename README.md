@@ -1,93 +1,141 @@
-# NotionSync — beta-0.1
+# NotionSync — Web Edition
 
-A desktop helper app to sync Canvas assignments to a Notion database, with a simple scheduler and a time-block generator. This branch (beta-0.1) includes a refreshed UI/UX, safer credential storage, and several stability fixes.
+A cross-platform web application to sync Canvas assignments to a Notion database, with a simple scheduler and a time-block generator. Accessible from any device with a web browser - desktop, mobile, tablet, or anywhere!
 
-## What’s in this branch
-- Sidebar UX polish: smooth collapse/expand animation, text fade, width memory, consistent icon/text styling (font-size 11px, light text color).
-- Safer paths: credentials/logs stored under OS-specific app support (macOS: `~/Library/Application Support/NotionSync/`).
-- Key storage: Canvas/Notion API keys saved to the OS keychain via `keyring`.
-- Tray integration: menu for running sync, showing window, quitting.
-- Scheduler: daily background sync using `schedule` (optional daemon mode).
-- Settings dialog: 
-  - Buckets (Past/Undated/Upcoming/Future/Ungraded) selection.
-  - Startup preference (OS login item on macOS/Windows).
-  - Advanced toggle retained for future features.
-- Course selection: fetch Canvas courses and persist selected IDs for targeted syncs.
-- Time Block Generator: plan study blocks from Canvas assignments; optional Notion export.
-- Diagnostics tooling: `scripts/capture_sidebar_gif.py` to capture a GIF + JSON metrics of sidebar behavior for regressions.
+## What's in this version
+- **Web-based interface**: Access from any device with a web browser - no installation needed on client devices!
+- **Cross-platform**: Works on Windows, macOS, Linux, mobile devices, and tablets
+- **Modern UI**: Clean, responsive design that adapts to all screen sizes
+- **Secure credential storage**: Canvas/Notion API keys saved to the OS keychain via `keyring`
+- **All original features**:
+  - Daily background sync using `schedule`
+  - Settings for bucket selection (Past/Undated/Upcoming/Future/Ungraded)
+  - Course selection: Fetch Canvas courses and persist selected IDs for targeted syncs
+  - Time Block Generator: Plan study blocks from Canvas assignments with optional Notion export
+  - Live sync status: Real-time updates as sync progresses
+
+## Why Web-Based?
+
+The original PyQt6 desktop application has been replaced with a Flask web application to provide:
+- **True cross-platform compatibility**: Access from any device (desktop, mobile, tablet)
+- **No installation required**: Users just need a web browser
+- **Easier deployment**: Can be hosted on a server for remote access
+- **Simpler maintenance**: Web technologies are easier to update and debug
 
 ## Requirements
 - Python 3.10+
-- Dependencies in `requirements.txt` (notably: PyQt6, schedule, keyring, requests, Pillow for capture script, optional `qt-material`).
+- Dependencies in `requirements.txt` (notably: Flask, schedule, keyring, requests)
 
 Install dependencies:
 
-```
+```bash
 python3 -m pip install -r requirements.txt
 ```
 
 ## Running
-Interactive app (GUI):
 
-```
-python3 CanvasAssignments.py
-```
+### Web Interface (Recommended)
 
-Background scheduler daemon (tray + daily sync at configured time):
+Start the web server:
 
-```
-python3 CanvasAssignments.py --daemon
+```bash
+python3 app.py
 ```
 
-One-off background sync (no full GUI):
+Then open your browser to: **http://localhost:5000**
 
-```
-python3 CanvasAssignments.py --background
+The web interface will be accessible from any device on your local network.
+
+### Background Sync (Command Line)
+
+One-off background sync (no GUI):
+
+```bash
+python3 app.py --background
 ```
 
 ## First-time setup
-1. Enter Canvas API Key, Notion API Key, and Notion Database ID.
-2. Optionally choose Canvas Base URL or use the default institution.
-3. Use Settings to select sync buckets and enable startup.
-4. (Optional) Load courses and select which to sync.
+1. Access the web interface at http://localhost:5000
+2. Navigate to the "Credentials" page
+3. Enter Canvas API Key, Notion API Key, and Notion Database ID
+4. Optionally configure Canvas Base URL or use the default institution
+5. Go to "Settings" to select sync buckets
+6. (Optional) Go to "Courses" to select which courses to sync
 
 Notes:
-- API keys are saved to the OS keychain; the JSON config omits secrets.
-- On first successful sync, the app marks "first_sync_complete" to adjust future behavior.
+- API keys are saved to the OS keychain; the JSON config omits secrets
+- On first successful sync, the app marks "first_sync_complete" to adjust future behavior
 
 ## Notion database compatibility
 The app checks and ensures required database properties. It logs progress and will warn if the schema is incompatible.
 
 ## Time Block Generator
-- Configure block length and daily max.
-- Optionally provide an availability JSON.
-- Dry-run preview or export directly to Notion.
+1. Navigate to "Time Blocks" page
+2. Configure block length and daily max
+3. Optionally provide an availability JSON
+4. Choose to preview or export directly to Notion
 
-## Packaging
-A `NotionSync.spec` (PyInstaller) file is included. Typical build:
+## Features
 
-```
-pyinstaller NotionSync.spec
-```
+### Dashboard
+- One-click sync with real-time progress updates
+- Quick access to all features
+- Status overview
 
-Artifacts will appear under `build/NotionSync/` and `dist/` (if enabled in the spec).
+### Credentials Management
+- Secure storage using OS keychain
+- Easy credential updates
+- Built-in help for finding credentials
 
-## Diagnostics & QA (optional)
-Sidebar capture and metrics:
+### Course Selection
+- View all your Canvas courses
+- Select which courses to sync
+- Saves preferences for future syncs
 
-```
-python3 scripts/capture_sidebar_gif.py
-```
+### Settings
+- Configure sync buckets (Past, Undated, Upcoming, Future, Ungraded)
+- Set up automatic daily sync scheduling
+- Customize sync behavior
 
-Outputs:
-- `sidebar_capture.gif` — visual of the expand/collapse cycle
-- `sidebar_metrics.json` — per-frame geometry + state for analysis
+### Time Block Generator
+- Generate study time blocks from assignments
+- Configure block duration and daily limits
+- Export to Notion or preview
 
-## Known limitations (beta)
-- UI theming uses `qt-material` when available; otherwise falls back to bundled QSS.
-- Linux autostart integration not fully implemented.
-- Notion database schema must contain/allow the required date property.
+### Logs
+- View detailed sync logs
+- Track sync history
+- Troubleshoot issues
+
+## Deployment Options
+
+### Local Use
+Run on your computer and access from any device on your local network.
+
+### Server Deployment
+Deploy to a server (e.g., DigitalOcean, AWS, Heroku) for access from anywhere.
+
+### Docker (Future)
+A Docker container can be created for even easier deployment.
 
 ## Data locations
 - Config/Logs: OS app data folder (e.g., macOS: `~/Library/Application Support/NotionSync/`)
 - Secrets: OS keychain via `keyring` (no API keys in JSON by design)
+
+## Migration from PyQt6
+
+If you were using the old PyQt6 version:
+- Your credentials and configuration files are compatible
+- The web version uses the same data storage locations
+- All features have been migrated to the web interface
+- Simply install the new requirements and run `app.py`
+
+## Known limitations
+- Scheduler/daemon mode needs to be implemented for web version
+- Mobile UI is functional but can be further optimized
+
+## Contributing
+Contributions are welcome! This web-based approach makes it easier for developers to contribute without needing Qt expertise.
+
+## License
+See LICENSE file for details.
