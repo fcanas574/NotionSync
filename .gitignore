@@ -12,3 +12,13 @@ venv/
 sidebar_capture.gif
 sidebar_edge_positions.txt
 sidebar_width_trace.txt
+
+# Django
+*.pyc
+db.sqlite3
+/static/
+/media/
+*.pot
+*.mo
+.env
+local_settings.py

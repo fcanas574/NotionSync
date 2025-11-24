@@ -1,0 +1,78 @@
+{% extends 'sync/base.html' %}
+
+{% block title %}Sync History - NotionSync{% endblock %}
+
+{% block content %}
+<h2>Sync History</h2>
+
+<div class="card">
+    {% if logs %}
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="border-bottom: 2px solid #ddd;">
+                    <th style="padding: 0.75rem; text-align: left;">Started</th>
+                    <th style="padding: 0.75rem; text-align: left;">Completed</th>
+                    <th style="padding: 0.75rem; text-align: left;">Status</th>
+                    <th style="padding: 0.75rem; text-align: left;">Assignments</th>
+                    <th style="padding: 0.75rem; text-align: left;">Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr style="border-bottom: 1px solid #eee;">
+                    <td style="padding: 0.75rem;">{{ log.started_at|date:"Y-m-d H:i:s" }}</td>
+                    <td style="padding: 0.75rem;">
+                        {% if log.completed_at %}
+                            {{ log.completed_at|date:"Y-m-d H:i:s" }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td style="padding: 0.75rem;">
+                        {% if log.status == 'success' %}
+                            <span style="color: #27ae60; font-weight: 500;">✓ Success</span>
+                        {% elif log.status == 'failed' %}
+                            <span style="color: #e74c3c; font-weight: 500;">✗ Failed</span>
+                        {% else %}
+                            <span style="color: #f39c12; font-weight: 500;">⟳ Running</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding: 0.75rem;">{{ log.assignments_synced }}</td>
+                    <td style="padding: 0.75rem;">
+                        {% if log.message %}
+                            <button class="btn" style="padding: 0.25rem 0.5rem; font-size: 0.875rem;" 
+                                    onclick="toggleDetails({{ log.id }})">View</button>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                </tr>
+                {% if log.message %}
+                <tr id="details-{{ log.id }}" style="display: none;">
+                    <td colspan="5" style="padding: 1rem; background-color: #f8f9fa;">
+                        <pre style="white-space: pre-wrap; font-size: 0.875rem; margin: 0;">{{ log.message }}</pre>
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No sync history yet. Run your first sync from the <a href="{% url 'dashboard' %}">Dashboard</a>.</p>
+    {% endif %}
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function toggleDetails(logId) {
+    const detailsRow = document.getElementById('details-' + logId);
+    if (detailsRow.style.display === 'none') {
+        detailsRow.style.display = 'table-row';
+    } else {
+        detailsRow.style.display = 'none';
+    }
+}
+</script>
+{% endblock %}

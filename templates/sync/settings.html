@@ -1,0 +1,126 @@
+{% extends 'sync/base.html' %}
+
+{% block title %}Settings - NotionSync{% endblock %}
+
+{% block content %}
+<h2>Settings</h2>
+
+<div class="card">
+    <h3>API Credentials</h3>
+    
+    <form method="post">
+        {% csrf_token %}
+        
+        <div class="form-group">
+            <label for="canvas_api_key">Canvas API Key:</label>
+            <input type="password" id="canvas_api_key" name="canvas_api_key" 
+                   value="{{ profile.canvas_api_key }}" placeholder="Enter Canvas API Key">
+            <div class="help-text">Your Canvas API token for accessing course data</div>
+        </div>
+        
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="use_default_url" 
+                       {% if profile.use_default_canvas_url %}checked{% endif %}>
+                Use Default Institution (Key Institute)
+            </label>
+        </div>
+        
+        <div class="form-group" id="canvas-url-group" 
+             style="{% if profile.use_default_canvas_url %}display: none;{% endif %}">
+            <label for="canvas_base_url">Canvas Base URL:</label>
+            <input type="url" id="canvas_base_url" name="canvas_base_url" 
+                   value="{{ profile.canvas_base_url }}" 
+                   placeholder="https://canvas.instructure.com/api/v1">
+            <div class="help-text">Canvas API base URL (e.g., https://canvas.instructure.com/api/v1)</div>
+        </div>
+        
+        <div class="form-group">
+            <label for="notion_api_key">Notion API Key:</label>
+            <input type="password" id="notion_api_key" name="notion_api_key" 
+                   value="{{ profile.notion_api_key }}" placeholder="Enter Notion API Key">
+            <div class="help-text">Your Notion integration token</div>
+        </div>
+        
+        <div class="form-group">
+            <label for="notion_database_id">Notion Database ID:</label>
+            <input type="text" id="notion_database_id" name="notion_database_id" 
+                   value="{{ profile.notion_database_id }}" 
+                   placeholder="Enter Notion Database ID (32 character hex)">
+            <div class="help-text">The 32-character database ID from your Notion database URL</div>
+        </div>
+        
+        <h3 style="margin-top: 2rem;">Sync Options</h3>
+        
+        <div class="form-group">
+            <label>Assignment Buckets to Sync:</label>
+            <div style="margin-top: 0.5rem;">
+                <label style="display: block; margin-bottom: 0.5rem;">
+                    <input type="checkbox" name="bucket_past" 
+                           {% if 'past' in profile.sync_buckets %}checked{% endif %}>
+                    Past
+                </label>
+                <label style="display: block; margin-bottom: 0.5rem;">
+                    <input type="checkbox" name="bucket_undated" 
+                           {% if 'undated' in profile.sync_buckets %}checked{% endif %}>
+                    Undated
+                </label>
+                <label style="display: block; margin-bottom: 0.5rem;">
+                    <input type="checkbox" name="bucket_upcoming" 
+                           {% if 'upcoming' in profile.sync_buckets %}checked{% endif %}>
+                    Upcoming
+                </label>
+                <label style="display: block; margin-bottom: 0.5rem;">
+                    <input type="checkbox" name="bucket_future" 
+                           {% if 'future' in profile.sync_buckets %}checked{% endif %}>
+                    Future
+                </label>
+                <label style="display: block; margin-bottom: 0.5rem;">
+                    <input type="checkbox" name="bucket_ungraded" 
+                           {% if 'ungraded' in profile.sync_buckets %}checked{% endif %}>
+                    Ungraded
+                </label>
+            </div>
+            <div class="help-text">Select which assignment categories to sync from Canvas</div>
+        </div>
+        
+        <button type="submit" class="btn btn-success">Save Settings</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Help</h3>
+    <p><strong>How to get your Canvas API Key:</strong></p>
+    <ol>
+        <li>Log into your Canvas account</li>
+        <li>Go to Account → Settings</li>
+        <li>Scroll to "Approved Integrations"</li>
+        <li>Click "+ New Access Token"</li>
+        <li>Copy the generated token</li>
+    </ol>
+    
+    <p style="margin-top: 1rem;"><strong>How to get your Notion API Key and Database ID:</strong></p>
+    <ol>
+        <li>Go to <a href="https://www.notion.so/my-integrations" target="_blank">notion.so/my-integrations</a></li>
+        <li>Create a new integration and copy the token</li>
+        <li>Share your database with the integration</li>
+        <li>Copy the database ID from the database URL (32 character hex string)</li>
+    </ol>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const useDefaultCheckbox = document.querySelector('input[name="use_default_url"]');
+    const urlGroup = document.getElementById('canvas-url-group');
+    
+    if (useDefaultCheckbox) {
+        useDefaultCheckbox.addEventListener('change', function() {
+            urlGroup.style.display = this.checked ? 'none' : 'block';
+        });
+    }
+});
+</script>
+{% endblock %}
