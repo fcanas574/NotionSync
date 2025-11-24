@@ -48,7 +48,8 @@ log_file_path = SAFE_PATHS['log']
 
 # Flask app setup
 app = Flask(__name__)
-app.secret_key = os.urandom(24)  # For session management
+# Use a persistent secret key from environment, or a fixed random one for dev
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production-' + str(os.urandom(24).hex()))
 
 # Global variables for sync status
 sync_status = {
@@ -330,7 +331,12 @@ def time_blocks():
             )
             
             # Generate time blocks
-            availability = json.loads(availability_json) if availability_json and availability_json != '{}' else None
+            try:
+                availability = json.loads(availability_json) if availability_json and availability_json != '{}' else None
+            except json.JSONDecodeError as e:
+                return render_template('time_blocks.html',
+                                     error=f'Invalid JSON in availability field: {str(e)}')
+            
             blocks = schedule_blocks(
                 assignments,
                 availability,
@@ -382,12 +388,26 @@ if __name__ == '__main__':
         sys.exit(0)
     else:
         # Run the web server
-        port = int(os.environ.get('PORT', 5000))
+        try:
+            port = int(os.environ.get('PORT', 5000))
+        except ValueError:
+            print("ERROR: PORT environment variable must be a number")
+            sys.exit(1)
+        
+        # Check if running in development or production
+        debug_mode = os.environ.get('FLASK_ENV') == 'development'
+        host = os.environ.get('FLASK_HOST', '0.0.0.0')
+        
         print(f"\n{'='*60}")
         print(f"NotionSync Web Interface")
         print(f"{'='*60}")
         print(f"Access the application at: http://localhost:{port}")
+        if host == '0.0.0.0':
+            print(f"WARNING: Server is accessible from all network interfaces")
+            print(f"For production use, set FLASK_HOST to '127.0.0.1' for local only")
+        if debug_mode:
+            print(f"Running in DEBUG mode - do not use in production!")
         print(f"Press CTRL+C to stop the server")
         print(f"{'='*60}\n")
         
-        app.run(host='0.0.0.0', port=port, debug=True)
+        app.run(host=host, port=port, debug=debug_mode)
