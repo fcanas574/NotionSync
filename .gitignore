@@ -12,3 +12,4 @@ venv/
 sidebar_capture.gif
 sidebar_edge_positions.txt
 sidebar_width_trace.txt
+__pycache__/
