@@ -7,6 +7,13 @@ import schedule
 import re # Import regex for parsing status messages
 import locale # --- NEW: For language detection ---
 import keyring # --- NEW: For secure credential storage ---
+
+# --- NEW: For system theme detection ---
+try:
+    import darkdetect
+    HAS_DARKDETECT = True
+except ImportError:
+    HAS_DARKDETECT = False
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QDialog,
     QLabel, QLineEdit, QPushButton, QTextEdit, QProgressBar,
@@ -221,6 +228,143 @@ MODERN_QSS = MODERN_QSS.replace(
     "image: url(" + _check_img_path + ");"
 )
 
+# --- Light Mode QSS Stylesheet ---
+LIGHT_QSS = """
+QWidget {
+    background-color: #f5f5f7; color: #1d1d1f;
+    font-family: 'Figtree', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', sans-serif;
+    font-size: 13px;
+}
+QTabWidget::pane { border: 1px solid #d2d2d7; border-top: none; }
+QTabBar::tab {
+    background: transparent; border: 1px solid transparent; border-bottom: none;
+    padding: 8px 14px; border-top-left-radius: 6px; border-top-right-radius: 6px;
+}
+QTabBar::tab:selected { background: #ffffff; border: 1px solid #d2d2d7; }
+QTabBar::tab:!selected { margin-top: 2px; }
+QLabel { background-color: transparent; }
+QLineEdit, QTextEdit, QPlainTextEdit {
+    background-color: #ffffff; border: 1px solid #d2d2d7; border-radius: 8px; padding: 6px; color: #1d1d1f;
+}
+QLineEdit:focus, QTextEdit:focus { border: 1px solid #0a84ff; }
+
+/* Modern, rounded buttons */
+QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0a84ff, stop:1 #0666d6);
+    color: white; font-weight: 600; border: none; border-radius: 8px; padding: 8px 14px;
+}
+QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0c8bff, stop:1 #0570d7); }
+QPushButton:pressed { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0666d6, stop:1 #0459b8); }
+QPushButton:disabled { background-color: #d2d2d7; color: #86868b; }
+
+QPushButton#HelpButton {
+    background-color: transparent; color: #0a84ff; font-weight: 700; font-size: 15px;
+    border-radius: 50px; padding: 6px 10px; border: 1px solid rgba(0,0,0,0.08);
+}
+QPushButton#HelpButton:hover { background-color: rgba(0,0,0,0.03); }
+
+QTextEdit { background-color: #ffffff; border: 1px solid #d2d2d7; border-radius: 8px; padding: 8px; }
+QProgressBar { border: 1px solid #d2d2d7; border-radius: 8px; text-align: center; color: #1d1d1f; background-color: #e8e8ed; }
+QProgressBar::chunk { background-color: #0a84ff; border-radius: 6px; margin: 1px; }
+QMenu { background-color: #ffffff; border: 1px solid #d2d2d7; }
+QMenu::item { padding: 8px 18px; }
+QMenu::item:selected { background-color: rgba(10,132,255,0.12); }
+QMenu::separator { height: 1px; background: #d2d2d7; margin: 4px 0px; }
+QTimeEdit { background-color: #ffffff; border: 1px solid #d2d2d7; border-radius: 6px; padding: 4px; color: #1d1d1f; }
+QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid #d2d2d7; border-radius: 4px; }
+QCheckBox::indicator:unchecked { background-color: #ffffff; }
+QCheckBox::indicator:checked { background-color: transparent; border: 1px solid #0a84ff; image: url(""" + _check_img_path + """); }
+QHeaderView::section { background-color: #f0f0f5; padding: 6px; border: 1px solid #d2d2d7; }
+QTreeView, QListView, QTableView { background-color: #ffffff; alternate-background-color: #f5f5f7; gridline-color: #d2d2d7; }
+
+/* Ensure small controls look modern */
+QSpinBox, QComboBox { background-color: #ffffff; border: 1px solid #d2d2d7; border-radius: 6px; padding: 4px; color: #1d1d1f; }
+QComboBox QAbstractItemView { background-color: #ffffff; color: #1d1d1f; selection-background-color: rgba(10,132,255,0.12); }
+
+/* Use subtle focus indicator for keyboard navigation */
+*:focus { outline: none; }
+QLineEdit:focus, QTextEdit:focus { border: 1px solid #0a84ff; }
+QPushButton:focus { border: 1px solid rgba(10,132,255,0.25); }
+
+QTextEdit#HelpText { background-color: transparent; border: none; padding: 10px; }
+QGroupBox { border: 1px solid #d2d2d7; border-radius: 8px; margin-top: 12px; padding-top: 8px; }
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
+"""
+
+# --- Theme Detection and Application Helpers ---
+def get_system_theme():
+    """Detect system theme. Returns 'dark' or 'light'."""
+    if HAS_DARKDETECT:
+        try:
+            theme = darkdetect.theme()
+            if theme and theme.lower() == 'light':
+                return 'light'
+        except Exception:
+            pass
+    return 'dark'  # Default to dark if detection fails
+
+def get_dark_palette():
+    """Return a QPalette configured for dark mode."""
+    palette = QApplication.instance().palette() if QApplication.instance() else None
+    if palette is None:
+        from PyQt6.QtGui import QPalette
+        palette = QPalette()
+    palette.setColor(palette.ColorRole.Window, QColor(43, 43, 43))
+    palette.setColor(palette.ColorRole.WindowText, QColor(240, 240, 240))
+    palette.setColor(palette.ColorRole.Base, QColor(37, 37, 38))
+    palette.setColor(palette.ColorRole.AlternateBase, QColor(60, 63, 65))
+    palette.setColor(palette.ColorRole.ToolTipBase, QColor(240, 240, 240))
+    palette.setColor(palette.ColorRole.ToolTipText, QColor(0, 0, 0))
+    palette.setColor(palette.ColorRole.Text, QColor(240, 240, 240))
+    palette.setColor(palette.ColorRole.Button, QColor(60, 63, 65))
+    palette.setColor(palette.ColorRole.ButtonText, QColor(240, 240, 240))
+    palette.setColor(palette.ColorRole.Highlight, QColor(0, 120, 215))
+    palette.setColor(palette.ColorRole.HighlightedText, QColor(255, 255, 255))
+    return palette
+
+def get_light_palette():
+    """Return a QPalette configured for light mode."""
+    palette = QApplication.instance().palette() if QApplication.instance() else None
+    if palette is None:
+        from PyQt6.QtGui import QPalette
+        palette = QPalette()
+    palette.setColor(palette.ColorRole.Window, QColor(245, 245, 247))
+    palette.setColor(palette.ColorRole.WindowText, QColor(29, 29, 31))
+    palette.setColor(palette.ColorRole.Base, QColor(255, 255, 255))
+    palette.setColor(palette.ColorRole.AlternateBase, QColor(245, 245, 247))
+    palette.setColor(palette.ColorRole.ToolTipBase, QColor(255, 255, 255))
+    palette.setColor(palette.ColorRole.ToolTipText, QColor(29, 29, 31))
+    palette.setColor(palette.ColorRole.Text, QColor(29, 29, 31))
+    palette.setColor(palette.ColorRole.Button, QColor(232, 232, 237))
+    palette.setColor(palette.ColorRole.ButtonText, QColor(29, 29, 31))
+    palette.setColor(palette.ColorRole.Highlight, QColor(0, 120, 215))
+    palette.setColor(palette.ColorRole.HighlightedText, QColor(255, 255, 255))
+    return palette
+
+
+def get_current_theme_mode():
+    """Return current effective theme mode based on saved preference."""
+    saved_theme = 'auto'
+    if os.path.exists(credentials_file_path):
+        try:
+            with open(credentials_file_path, 'r') as f:
+                creds = json.load(f)
+                saved_theme = creds.get('theme', 'auto')
+        except Exception:
+            pass
+    if saved_theme == 'auto':
+        return get_system_theme()
+    return saved_theme
+
+
+def get_nav_text_color(alpha=255):
+    """Get appropriate nav button text color based on current theme."""
+    theme = get_current_theme_mode()
+    if theme == 'light':
+        return f'rgba(29,29,31,{alpha})'
+    else:
+        return f'rgba(232,238,246,{alpha})'
+
 
 # --- EasterEggPopup Class (MODIFIED for resource_path) ---
 class EasterEggPopup(QDialog):
@@ -313,15 +457,29 @@ class SettingsDialog(QDialog):
     toggle-list instead of the sync blocks button. Values are exposed as
     attributes after the dialog is accepted.
     """
-    def __init__(self, parent=None, startup_checked=False, advanced_checked=False, current_buckets=None):
+    def __init__(self, parent=None, startup_checked=False, advanced_checked=False, current_buckets=None, current_theme='auto'):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setModal(True)
-        self.resize(520, 420)
+        self.resize(520, 480)  # Slightly taller to fit theme selector
 
         self.selected_buckets = current_buckets or []
 
         layout = QVBoxLayout(self)
+
+        # --- Theme Selection (NEW) ---
+        theme_group = QGroupBox('Appearance')
+        theme_layout = QHBoxLayout()
+        theme_layout.addWidget(QLabel('Theme:'))
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(['Auto', 'Light', 'Dark'])
+        # Set current selection based on saved value
+        theme_map = {'auto': 0, 'light': 1, 'dark': 2}
+        self.theme_combo.setCurrentIndex(theme_map.get(current_theme.lower(), 0))
+        theme_layout.addWidget(self.theme_combo)
+        theme_layout.addStretch()
+        theme_group.setLayout(theme_layout)
+        layout.addWidget(theme_group)
 
         # Startup toggle
         self.startup_cb = QCheckBox(T['startup_checkbox'])
@@ -395,6 +553,12 @@ class SettingsDialog(QDialog):
             self.advanced_flags = {'show_advanced': bool(self.adv_show_advanced.isChecked())}
         except Exception:
             self.advanced_flags = {'show_advanced': False}
+        # --- Theme selection (NEW) ---
+        try:
+            theme_index = self.theme_combo.currentIndex()
+            self.theme_mode = ['auto', 'light', 'dark'][theme_index]
+        except Exception:
+            self.theme_mode = 'auto'
         self.accept()
 
 
@@ -419,11 +583,12 @@ class LabelOpacityHelper(QObject):
             v = 1.0
         self._opacity = v
         alpha = int(v * 255)
-        # Use the same text color as the QSS base but with varying alpha.
+        # Use theme-aware text color with varying alpha.
         # Keep padding so layout sizeHint stays consistent.
         try:
             # Preserve custom font-size for nav buttons so it doesn't reset after fade animations.
-            self._button.setStyleSheet(f"text-align: left; padding-left: 8px; font-size: 11px; color: rgba(232,238,246,{alpha});")
+            text_color = get_nav_text_color(alpha)
+            self._button.setStyleSheet(f"text-align: left; padding-left: 8px; font-size: 11px; color: {text_color};")
         except Exception:
             pass
 
@@ -765,12 +930,24 @@ class NotionSyncApp(QWidget):
             self.status_output.append("Please provide Canvas API key and URL before loading courses.")
             return
 
+        # --- QOL: Show loading state on button ---
+        original_text = self.load_courses_button.text()
+        self.load_courses_button.setText("Loading...")
+        self.load_courses_button.setEnabled(False)
+
         # Use a module-level QThread worker
         loader = CourseLoaderThread(key=canvas_key, base=base_url)
         # keep a reference so it isn't garbage-collected while running
         self.course_loader_thread = loader
 
         def on_loaded(courses):
+            # --- QOL: Restore button state ---
+            try:
+                self.load_courses_button.setText(original_text)
+                self.load_courses_button.setEnabled(True)
+            except Exception:
+                pass
+
             if not courses:
                 self.status_output.append("No courses returned from Canvas or fetch failed.")
                 return
@@ -835,35 +1012,61 @@ class NotionSyncApp(QWidget):
         # Visual validation
         if re.fullmatch(r"[a-f0-9]{32}", text):
             self.notion_db_input.setStyleSheet("border: 1px solid #00ff00;")
-            # Start a background lookup for the database title
-            notion_key = self.notion_key_input.text().strip() or keyring.get_password(APP_NAME, "notion_key") or ""
-            if notion_key:
-                loader = DatabaseNameLoaderThread(notion_key=notion_key, database_id=text)
-                self.db_name_thread = loader
-                def _on_db_name(name):
-                    try:
-                        if name:
-                            self.notion_db_name_label.setText(f"Database: {name}")
-                            self.notion_db_name_label.setStyleSheet("color: #a9ffb1; font-size: 12px; margin-top: 4px;")
-                        else:
-                            self.notion_db_name_label.setText("Database: (not found or inaccessible)")
-                            self.notion_db_name_label.setStyleSheet("color: #ffb1b1; font-size: 12px; margin-top: 4px;")
-                    except Exception:
-                        pass
-                    finally:
-                        try:
-                            self.db_name_thread = None
-                        except Exception:
-                            pass
-                loader.finished.connect(_on_db_name)
-                loader.start()
-            else:
-                # No API key available; show hint
-                self.notion_db_name_label.setText("(Enter Notion API key to fetch database name)")
-                self.notion_db_name_label.setStyleSheet("color: #a9a9a9; font-size: 12px; margin-top: 4px;")
+            # --- QOL: Debounce the database name lookup ---
+            # Cancel any existing debounce timer
+            if hasattr(self, '_db_lookup_timer') and self._db_lookup_timer is not None:
+                self._db_lookup_timer.stop()
+            
+            # Store the text for the delayed lookup
+            self._pending_db_lookup_text = text
+            
+            # Create a single-shot timer (500ms debounce)
+            self._db_lookup_timer = QTimer()
+            self._db_lookup_timer.setSingleShot(True)
+            self._db_lookup_timer.timeout.connect(self._do_debounced_db_lookup)
+            self._db_lookup_timer.start(500)
         else:
             self.notion_db_input.setStyleSheet("")
             self.notion_db_name_label.setText("")
+
+    def _do_debounced_db_lookup(self):
+        """Perform the actual database name lookup after debounce delay."""
+        text = getattr(self, '_pending_db_lookup_text', '')
+        if not text:
+            return
+        
+        notion_key = self.notion_key_input.text().strip() or keyring.get_password(APP_NAME, "notion_key") or ""
+        if notion_key:
+            # Cancel any existing thread
+            if hasattr(self, 'db_name_thread') and self.db_name_thread is not None:
+                try:
+                    self.db_name_thread.quit()
+                except Exception:
+                    pass
+            
+            loader = DatabaseNameLoaderThread(notion_key=notion_key, database_id=text)
+            self.db_name_thread = loader
+            def _on_db_name(name):
+                try:
+                    if name:
+                        self.notion_db_name_label.setText(f"Database: {name}")
+                        self.notion_db_name_label.setStyleSheet("color: #a9ffb1; font-size: 12px; margin-top: 4px;")
+                    else:
+                        self.notion_db_name_label.setText("Database: (not found or inaccessible)")
+                        self.notion_db_name_label.setStyleSheet("color: #ffb1b1; font-size: 12px; margin-top: 4px;")
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        self.db_name_thread = None
+                    except Exception:
+                        pass
+            loader.finished.connect(_on_db_name)
+            loader.start()
+        else:
+            # No API key available; show hint
+            self.notion_db_name_label.setText("(Enter Notion API key to fetch database name)")
+            self.notion_db_name_label.setStyleSheet("color: #a9a9a9; font-size: 12px; margin-top: 4px;")
 
     def _setup_ui(self):
         main_layout = QHBoxLayout(self)
@@ -1125,8 +1328,10 @@ class NotionSyncApp(QWidget):
         for b in (btn_assign, btn_sched, btn_time):
             b.setCheckable(True)
             b.setMinimumHeight(36)
-            # Reduce font size and explicitly set consistent light text color.
-            b.setStyleSheet('text-align: left; padding-left: 8px; font-size: 11px; color: rgba(232,238,246,255);')
+            b.setFixedHeight(36)  # Keep height consistent during collapse/expand
+            # Reduce font size and use theme-aware text color.
+            text_color = get_nav_text_color(255)
+            b.setStyleSheet(f'text-align: left; padding-left: 8px; font-size: 11px; color: {text_color};')
             nav_layout.addWidget(b)
             self.nav_buttons.append(b)
 
@@ -1236,7 +1441,8 @@ class NotionSyncApp(QWidget):
 
                 def _on_collapse_finished():
                     self._sidebar_collapsed = True
-                    style_centered = 'text-align: center; padding: 0px; border: none; font-size: 11px; color: rgba(232,238,246,255);'
+                    text_color = get_nav_text_color(255)
+                    style_centered = f'text-align: center; padding: 0px; border: none; font-size: 11px; color: {text_color};'
                     for nb in self.nav_buttons:
                         try:
                             if not hasattr(nb, '_full_text'):
@@ -1244,8 +1450,10 @@ class NotionSyncApp(QWidget):
                             nb.setText('')
                             nb.setStyleSheet(style_centered)
                             nb.setToolTip(getattr(nb, '_full_text', ''))
-                            nb.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-                            nb.setFixedSize(QSize(72, 64))
+                            # Keep fixed height, let width adjust to collapsed container
+                            nb.setFixedHeight(36)
+                            nb.setMinimumWidth(0)
+                            nb.setMaximumWidth(16777215)
                             nb.setIconSize(QSize(24, 24))
                         except Exception:
                             pass
@@ -1256,8 +1464,9 @@ class NotionSyncApp(QWidget):
                                 sb._full_text = sb.text()
                             sb.setText('')
                             sb.setStyleSheet(style_centered)
-                            sb.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-                            sb.setFixedSize(QSize(72, 64))
+                            sb.setFixedHeight(36)
+                            sb.setMinimumWidth(0)
+                            sb.setMaximumWidth(16777215)
                             sb.setIconSize(QSize(24, 24))
                     except Exception:
                         pass
@@ -1265,13 +1474,15 @@ class NotionSyncApp(QWidget):
             else:
                 # EXPANDING: prepare labels (transparent) then expand width then fade in.
                 def _prepare():
-                    style_transparent = 'text-align: left; padding-left: 8px; font-size: 11px; color: rgba(232,238,246,0); border: none;'
+                    text_color_transparent = get_nav_text_color(0)
+                    style_transparent = f'text-align: left; padding-left: 8px; font-size: 11px; color: {text_color_transparent}; border: none;'
                     for nb in self.nav_buttons:
                         try:
                             full = getattr(nb, '_full_text', nb.text())
                             nb.setText(full)
                             nb.setStyleSheet(style_transparent)
-                            nb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+                            # Keep fixed height, flexible width
+                            nb.setFixedHeight(36)
                             nb.setMinimumWidth(0)
                             nb.setMaximumWidth(16777215)
                             nb.setIconSize(QSize(18, 18))
@@ -1286,7 +1497,7 @@ class NotionSyncApp(QWidget):
                             full = getattr(sb, '_full_text', sb.text())
                             sb.setText(full)
                             sb.setStyleSheet(style_transparent)
-                            sb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+                            sb.setFixedHeight(36)
                             sb.setMinimumWidth(0)
                             sb.setMaximumWidth(16777215)
                             sb.setIconSize(QSize(18, 18))
@@ -1387,7 +1598,8 @@ class NotionSyncApp(QWidget):
             pass
         try:
             # Match nav button font size and color for consistency.
-            settings_btn.setStyleSheet('text-align: left; padding-left: 8px; font-size: 11px; color: rgba(232,238,246,255);')
+            text_color = get_nav_text_color(255)
+            settings_btn.setStyleSheet(f'text-align: left; padding-left: 8px; font-size: 11px; color: {text_color};')
         except Exception:
             pass
         # Add opacity so settings fades with nav
@@ -1425,9 +1637,10 @@ class NotionSyncApp(QWidget):
     def _open_settings_dialog(self):
         """Show SettingsDialog and apply selected values back to the main UI."""
         try:
-            # Pass current buckets into the settings dialog so the user can edit them
+            # Pass current buckets and theme into the settings dialog
             current_buckets = self._load_settings_value('buckets', [k for k in ['past','undated','upcoming','future','ungraded']])
-            dlg = SettingsDialog(parent=self, startup_checked=self.startup_checkbox.isChecked(), advanced_checked=self.advanced_toggle.isChecked(), current_buckets=current_buckets)
+            current_theme = self._load_settings_value('theme', 'auto')
+            dlg = SettingsDialog(parent=self, startup_checked=self.startup_checkbox.isChecked(), advanced_checked=self.advanced_toggle.isChecked(), current_buckets=current_buckets, current_theme=current_theme)
             result = dlg.exec()
             if result == QDialog.DialogCode.Accepted:
                 # Apply startup setting
@@ -1451,6 +1664,16 @@ class NotionSyncApp(QWidget):
                     self._save_settings('buckets', selected_buckets)
                 except Exception:
                     pass
+                # --- Apply theme setting (NEW) ---
+                try:
+                    theme_mode = getattr(dlg, 'theme_mode', 'auto')
+                    self._save_settings('theme', theme_mode)
+                    apply_theme(theme_mode)
+                except Exception as te:
+                    try:
+                        self.status_output.append(f"Could not apply theme: {te}")
+                    except Exception:
+                        pass
         except Exception as e:
             try:
                 self.status_output.append(f"Could not open settings: {e}")
@@ -1810,6 +2033,32 @@ def start_scheduler_daemon():
     
     sys.exit(app.exec())
 
+# --- Theme Application Function (callable at runtime) ---
+def apply_theme(mode='auto'):
+    """Apply theme to the running application.
+    
+    Args:
+        mode: 'auto', 'light', or 'dark'
+    """
+    app = QApplication.instance()
+    if not app:
+        return
+    
+    # Determine effective theme
+    if mode == 'auto':
+        effective_theme = get_system_theme()
+    else:
+        effective_theme = mode
+    
+    # Apply palette and stylesheet
+    if effective_theme == 'light':
+        app.setPalette(get_light_palette())
+        app.setStyleSheet(LIGHT_QSS)
+    else:
+        app.setPalette(get_dark_palette())
+        app.setStyleSheet(MODERN_QSS)
+
+
 # --- Main execution block (MODIFIED for safe path and resources) ---
 if __name__ == "__main__":
     if '--daemon' in sys.argv: start_scheduler_daemon(); sys.exit()
@@ -1837,24 +2086,6 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    # Apply a complementary dark palette to match MODERN_QSS and avoid Windows 7 visuals
-    try:
-        palette = app.palette()
-        palette.setColor(palette.ColorRole.Window, QColor(43, 43, 43))
-        palette.setColor(palette.ColorRole.WindowText, QColor(240, 240, 240))
-        palette.setColor(palette.ColorRole.Base, QColor(37, 37, 38))
-        palette.setColor(palette.ColorRole.AlternateBase, QColor(60, 63, 65))
-        palette.setColor(palette.ColorRole.ToolTipBase, QColor(240, 240, 240))
-        palette.setColor(palette.ColorRole.ToolTipText, QColor(0, 0, 0))
-        palette.setColor(palette.ColorRole.Text, QColor(240, 240, 240))
-        palette.setColor(palette.ColorRole.Button, QColor(60, 63, 65))
-        palette.setColor(palette.ColorRole.ButtonText, QColor(240, 240, 240))
-        palette.setColor(palette.ColorRole.Highlight, QColor(0, 120, 215))
-        palette.setColor(palette.ColorRole.HighlightedText, QColor(255, 255, 255))
-        app.setPalette(palette)
-    except Exception:
-        pass
-
     # Set a modern default font (prefer Segoe UI on Windows)
     try:
         if sys.platform == 'win32':
@@ -1864,23 +2095,17 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    # Try to apply qt-material for a polished cross-platform theme; fall back to our QSS.
-    try:
-        import qt_material
+    # --- Load saved theme preference and apply ---
+    saved_theme = 'auto'
+    if os.path.exists(credentials_file_path):
         try:
-            qt_material.apply_stylesheet(app, theme='dark_cyan.xml')
-            # Merge our small overrides on top so custom tweaks remain in effect.
-            try:
-                current = app.styleSheet() or ""
-                app.setStyleSheet(current + "\n" + MODERN_QSS)
-            except Exception:
-                app.setStyleSheet(MODERN_QSS)
+            with open(credentials_file_path, 'r') as f:
+                creds = json.load(f)
+                saved_theme = creds.get('theme', 'auto')
         except Exception:
-            # If theme application fails, use our QSS
-            app.setStyleSheet(MODERN_QSS)
-    except Exception:
-        # qt-material not installed — use the existing QSS
-        app.setStyleSheet(MODERN_QSS)
+            pass
+    apply_theme(saved_theme)
+    
     app.setQuitOnLastWindowClosed(False)
 
     window = NotionSyncApp()

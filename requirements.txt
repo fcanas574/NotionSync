@@ -5,3 +5,4 @@ keyring
 python-dateutil
 colorama
 qt-material
+darkdetect
