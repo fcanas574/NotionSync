@@ -196,26 +196,115 @@ def schedule_blocks(assignments, availability, block_minutes=90, daily_max_minut
             from math import ceil
             n_blocks = max(1, min(max_blocks_per_assignment, ceil(est_minutes / block_minutes)))
         else:
-            # Score heuristics
+            # ============================================
+            # ENHANCED PRIORITY SCORING SYSTEM
+            # ============================================
             score = 1.0
-            # points influence (scaled)
+            
+            # --- 1. POINTS-BASED SCORING (Grade Impact) ---
+            # Higher point assignments likely have more grade impact
             if points is not None:
-                score += min(points / points_scale, 2.0)
-            # on-paper exams get a boost
+                if points >= 100:
+                    score += 2.5  # Major assignment (100+ pts)
+                elif points >= 50:
+                    score += 1.5  # Significant assignment (50-99 pts)
+                elif points >= 25:
+                    score += 1.0  # Medium assignment (25-49 pts)
+                elif points >= 10:
+                    score += 0.5  # Small assignment (10-24 pts)
+                # < 10 pts: no bonus (trivial)
+            
+            # --- 2. SUBMISSION TYPE SCORING ---
+            # On-paper/in-class exams need more prep
             if is_on_paper:
                 score += 2.0
-            # explicit priority field
+            
+            # File uploads and essays typically need more time
+            submission_str = ' '.join(str(s).lower() for s in submission_types)
+            if 'file_upload' in submission_str or 'online_upload' in submission_str:
+                score += 0.5
+            
+            # --- 3. EXPLICIT PRIORITY FIELD ---
             pr = str(a.get('priority') or '').lower()
-            if pr in ['high', 'urgent', 'exam', 'final', 'midterm']:
+            if pr in ['high', 'urgent', 'exam', 'final', 'midterm', 'critical']:
                 score += 1.5
-            # keyword detection
+            elif pr in ['medium', 'important']:
+                score += 0.75
+            
+            # --- 4. KEYWORD DETECTION (English & Spanish) ---
             text_check = ' '.join(filter(None, [str(a.get('name') or ''), str(a.get('description') or '')])).lower()
-            for kw in ['exam', 'final', 'midterm', 'paper', 'test', 'review', 'study']:
+            
+            # High-priority keywords (major assessments) - +2.0
+            high_priority_keywords = [
+                # English
+                'final exam', 'final project', 'midterm exam', 'midterm project',
+                'capstone', 'thesis', 'dissertation', 'comprehensive',
+                # Spanish
+                'examen final', 'proyecto final', 'examen parcial', 'parcial',
+                'tesis', 'trabajo final'
+            ]
+            
+            # Medium-priority keywords (significant work) - +1.5
+            medium_priority_keywords = [
+                # English
+                'exam', 'project', 'paper', 'essay', 'presentation', 'report',
+                'portfolio', 'research', 'analysis', 'proposal',
+                # Spanish
+                'examen', 'proyecto', 'ensayo', 'presentación', 'presentacion',
+                'informe', 'reporte', 'investigación', 'investigacion',
+                'análisis', 'analisis', 'propuesta', 'trabajo'
+            ]
+            
+            # Low-priority boost keywords (study aids) - +0.5
+            low_priority_keywords = [
+                # English
+                'review', 'study guide', 'practice', 'prep', 'preparation',
+                'draft', 'outline', 'summary', 'notes',
+                # Spanish
+                'repaso', 'guía de estudio', 'guia de estudio', 'práctica', 'practica',
+                'preparación', 'preparacion', 'borrador', 'esquema', 'resumen', 'notas'
+            ]
+            
+            # Check keywords in priority order (only apply highest match)
+            keyword_bonus = 0
+            for kw in high_priority_keywords:
                 if kw in text_check:
-                    score += 1.0
+                    keyword_bonus = 2.0
                     break
-
+            
+            if keyword_bonus == 0:
+                for kw in medium_priority_keywords:
+                    if kw in text_check:
+                        keyword_bonus = 1.5
+                        break
+            
+            if keyword_bonus == 0:
+                for kw in low_priority_keywords:
+                    if kw in text_check:
+                        keyword_bonus = 0.5
+                        break
+            
+            score += keyword_bonus
+            
+            # --- 5. URGENCY SCORING (Due Date Proximity) ---
+            days_until_due = (due_dt - today).days
+            if days_until_due <= 1:
+                score += 1.5  # Due tomorrow or today - URGENT
+            elif days_until_due <= 3:
+                score += 1.0  # Due within 3 days - HIGH
+            elif days_until_due <= 7:
+                score += 0.5  # Due within a week - MEDIUM
+            # > 7 days: no urgency bonus
+            
+            # --- 6. ASSIGNMENT NAME LENGTH HEURISTIC ---
+            # Longer, more descriptive names often indicate complex assignments
+            name_len = len(name) if name else 0
+            if name_len > 50:
+                score += 0.25  # Complex/detailed assignment name
+            
+            # ============================================
             # Map score to blocks (rounded), cap at max_blocks_per_assignment
+            # ============================================
             n_blocks = int(min(max(1, round(score)), max_blocks_per_assignment))
 
         # Schedule the required number of blocks for this assignment. Each successful
@@ -243,7 +332,11 @@ def schedule_blocks(assignments, availability, block_minutes=90, daily_max_minut
                     'course': a.get('course_name'),
                     'url': a.get('html_url'),
                     'duration': this_block_minutes,
-                    'description': a.get('description')
+                    'description': a.get('description'),
+                    'points': points,
+                    'total_blocks': n_blocks,
+                    'block_num': i + 1,
+                    'due_date': due_dt.isoformat()
                 })
                 day_key = date.fromisoformat(s.split('T')[0]).isoformat()
                 scheduled_on_day.setdefault(day_key, []).append((dateparser.isoparse(s), dateparser.isoparse(e)))

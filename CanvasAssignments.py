@@ -1028,6 +1028,12 @@ class NotionSyncApp(QWidget):
         else:
             self.notion_db_input.setStyleSheet("")
             self.notion_db_name_label.setText("")
+        
+        # Update export controls in case main DB is being used for time block export
+        try:
+            self._update_export_controls()
+        except Exception:
+            pass
 
     def _do_debounced_db_lookup(self):
         """Perform the actual database name lookup after debounce delay."""
@@ -1198,63 +1204,182 @@ class NotionSyncApp(QWidget):
         # --- Time Blocks Page (new) ---
         time_tab = QWidget()
         time_layout = QVBoxLayout(time_tab)
-        time_layout.addWidget(QLabel("Time Block Generator"))
+        time_layout.setSpacing(8)
+        
+        # Header with description
+        header_label = QLabel("Time Block Generator")
+        header_label.setStyleSheet("font-size: 16px; font-weight: bold; margin-bottom: 4px;")
+        time_layout.addWidget(header_label)
+        desc_label = QLabel("Automatically schedule study blocks for your upcoming assignments.")
+        desc_label.setStyleSheet("color: #888; font-size: 12px; margin-bottom: 8px;")
+        time_layout.addWidget(desc_label)
 
-        hb = QHBoxLayout()
-        hb.addWidget(QLabel("Block length (minutes):"))
-        from PyQt6.QtWidgets import QSpinBox
+        # Import needed widgets
+        from PyQt6.QtWidgets import QSpinBox, QScrollArea, QFrame
+
+        # --- Collapsible Block Settings ---
+        settings_header = self._create_collapsible_header("⚙️ Block Settings", expanded=True)
+        settings_content = QWidget()
+        settings_content_layout = QHBoxLayout(settings_content)
+        settings_content_layout.setContentsMargins(16, 8, 8, 8)
+        
+        settings_content_layout.addWidget(QLabel("Block length (min):"))
         self.block_minutes_spin = QSpinBox()
         self.block_minutes_spin.setRange(15, 480)
         self.block_minutes_spin.setValue(90)
-        hb.addWidget(self.block_minutes_spin)
+        self.block_minutes_spin.setToolTip("Duration of each study block in minutes")
+        settings_content_layout.addWidget(self.block_minutes_spin)
 
-        hb.addWidget(QLabel("Daily max (minutes):"))
+        settings_content_layout.addWidget(QLabel("Daily max (min):"))
         self.daily_max_spin = QSpinBox()
         self.daily_max_spin.setRange(0, 1440)
         self.daily_max_spin.setValue(240)
-        hb.addWidget(self.daily_max_spin)
+        self.daily_max_spin.setSpecialValueText("No limit")
+        self.daily_max_spin.setToolTip("Maximum study minutes per day (0 = no limit)")
+        settings_content_layout.addWidget(self.daily_max_spin)
+        settings_content_layout.addStretch()
 
-        time_layout.addLayout(hb)
+        settings_header.clicked.connect(lambda: self._toggle_collapsible(settings_content, settings_header))
+        time_layout.addWidget(settings_header)
+        time_layout.addWidget(settings_content)
 
-        # Availability file selector (optional)
-        avail_row = QHBoxLayout()
-        self.avail_path_input = QLineEdit(placeholderText='Optional availability JSON path')
-        avail_row.addWidget(self.avail_path_input)
-        browse_btn = QPushButton('Browse')
-        def _browse_avail():
-            from PyQt6.QtWidgets import QFileDialog
-            path, _ = QFileDialog.getOpenFileName(self, 'Select availability JSON', os.path.expanduser('~'))
-            if path:
-                self.avail_path_input.setText(path)
-        browse_btn.clicked.connect(_browse_avail)
-        avail_row.addWidget(browse_btn)
-        time_layout.addLayout(avail_row)
+        # --- Collapsible Weekly Availability ---
+        avail_header = self._create_collapsible_header("📅 Weekly Availability", expanded=False)
+        avail_content = QWidget()
+        avail_content_layout = QVBoxLayout(avail_content)
+        avail_content_layout.setContentsMargins(16, 8, 8, 8)
+        avail_content.setVisible(False)  # Start collapsed
+        
+        avail_desc = QLabel("Set your available study windows for each day of the week.")
+        avail_desc.setStyleSheet("color: #888; font-size: 11px;")
+        avail_content_layout.addWidget(avail_desc)
+        
+        # Store availability widgets
+        self.availability_widgets = {}
+        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        
+        for i, day in enumerate(days):
+            day_row = QHBoxLayout()
+            day_row.setSpacing(8)
+            
+            day_label = QLabel(day[:3])  # Mon, Tue, etc.
+            day_label.setFixedWidth(35)
+            day_row.addWidget(day_label)
+            
+            start_edit = QTimeEdit()
+            start_edit.setDisplayFormat("HH:mm")
+            start_edit.setTime(QTime(18, 0))  # Default 6 PM
+            day_row.addWidget(start_edit)
+            
+            day_row.addWidget(QLabel("to"))
+            
+            end_edit = QTimeEdit()
+            end_edit.setDisplayFormat("HH:mm")
+            end_edit.setTime(QTime(21, 0))  # Default 9 PM
+            day_row.addWidget(end_edit)
+            
+            enabled_cb = QCheckBox("Enabled")
+            enabled_cb.setChecked(True)
+            day_row.addWidget(enabled_cb)
+            day_row.addStretch()
+            
+            self.availability_widgets[i] = {'start': start_edit, 'end': end_edit, 'enabled': enabled_cb}
+            avail_content_layout.addLayout(day_row)
+        
+        # Quick presets row
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Presets:"))
+        evenings_btn = QPushButton("Evenings")
+        evenings_btn.setToolTip("6-9 PM all days")
+        evenings_btn.clicked.connect(lambda: self._apply_availability_preset('evenings'))
+        preset_row.addWidget(evenings_btn)
+        weekends_btn = QPushButton("Weekends")
+        weekends_btn.setToolTip("Saturday & Sunday only")
+        weekends_btn.clicked.connect(lambda: self._apply_availability_preset('weekends'))
+        preset_row.addWidget(weekends_btn)
+        allday_btn = QPushButton("9-5")
+        allday_btn.setToolTip("9 AM - 5 PM all days")
+        allday_btn.clicked.connect(lambda: self._apply_availability_preset('allday'))
+        preset_row.addWidget(allday_btn)
+        preset_row.addStretch()
+        avail_content_layout.addLayout(preset_row)
 
-        # Export options
-        export_row = QHBoxLayout()
-        self.export_checkbox = QCheckBox('Export to Notion')
-        export_row.addWidget(self.export_checkbox)
-        export_row.addWidget(QLabel('Database ID:'))
+        avail_header.clicked.connect(lambda: self._toggle_collapsible(avail_content, avail_header))
+        time_layout.addWidget(avail_header)
+        time_layout.addWidget(avail_content)
+
+        # --- Collapsible Notion Export ---
+        export_header = self._create_collapsible_header("📤 Notion Export (Optional)", expanded=False)
+        export_content = QWidget()
+        export_content_layout = QVBoxLayout(export_content)
+        export_content_layout.setContentsMargins(16, 8, 8, 8)
+        export_content.setVisible(False)  # Start collapsed
+        
+        export_row1 = QHBoxLayout()
+        self.export_checkbox = QCheckBox('Export blocks to Notion')
+        self.export_checkbox.setToolTip("When enabled, generated blocks will be added to your Notion database")
+        export_row1.addWidget(self.export_checkbox)
+        export_row1.addStretch()
+        export_content_layout.addLayout(export_row1)
+        
+        # Database selection - option to use main DB or custom
+        db_choice_row = QHBoxLayout()
+        self.use_main_db_radio = QCheckBox("Use main database (from Credentials)")
+        self.use_main_db_radio.setChecked(True)
+        self.use_main_db_radio.setToolTip("Use the same database configured in the Assignment Sync tab")
+        db_choice_row.addWidget(self.use_main_db_radio)
+        db_choice_row.addStretch()
+        export_content_layout.addLayout(db_choice_row)
+        
+        # Custom database input
+        export_row2 = QHBoxLayout()
+        export_row2.addWidget(QLabel('Custom Database ID:'))
         self.export_db_input = QLineEdit()
-        export_row.addWidget(self.export_db_input)
-        # No confirmation checkbox — keep a single Export control for simplicity
-        time_layout.addLayout(export_row)
+        self.export_db_input.setPlaceholderText("Enter Notion database ID for schedule blocks")
+        self.export_db_input.setEnabled(False)  # Disabled by default when using main DB
+        export_row2.addWidget(self.export_db_input)
+        export_content_layout.addLayout(export_row2)
+        
+        # Wire up database choice toggle
+        self.use_main_db_radio.stateChanged.connect(self._on_db_choice_changed)
 
-        # Buttons
+        export_header.clicked.connect(lambda: self._toggle_collapsible(export_content, export_header))
+        time_layout.addWidget(export_header)
+        time_layout.addWidget(export_content)
+
+        # Action buttons (always visible)
         btn_row = QHBoxLayout()
-        self.generate_blocks_btn = QPushButton('Generate Blocks (Dry Run)')
+        btn_row.setContentsMargins(0, 12, 0, 0)
+        self.generate_blocks_btn = QPushButton('Preview Blocks')
+        self.generate_blocks_btn.setToolTip("Generate time blocks without exporting (dry run)")
         self.generate_blocks_btn.clicked.connect(self._on_generate_blocks)
         btn_row.addWidget(self.generate_blocks_btn)
-        self.export_confirm_btn = QPushButton('Generate & Export')
+        
+        self.export_confirm_btn = QPushButton('Generate & Export to Notion')
+        self.export_confirm_btn.setToolTip("Generate blocks and export them to Notion")
         self.export_confirm_btn.clicked.connect(lambda: self._on_generate_blocks(export=True))
-        # Export button disabled until user opts-in and db id provided
         self.export_confirm_btn.setEnabled(False)
         btn_row.addWidget(self.export_confirm_btn)
+        btn_row.addStretch()
         time_layout.addLayout(btn_row)
 
-        # Output preview
+        # Wire up export controls
+        self.export_checkbox.stateChanged.connect(self._update_export_controls)
+        self.export_db_input.textChanged.connect(self._update_export_controls)
+        self.use_main_db_radio.stateChanged.connect(self._update_export_controls)
+
+        # Output preview with better styling
+        preview_label = QLabel("Preview:")
+        preview_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
+        time_layout.addWidget(preview_label)
+        
         self.blocks_preview = QTextEdit(readOnly=True)
+        self.blocks_preview.setPlaceholderText("Generated time blocks will appear here...")
+        self.blocks_preview.setMinimumHeight(120)
         time_layout.addWidget(self.blocks_preview)
+        
+        # Add stretch at the end to push everything up
+        time_layout.addStretch()
 
         self.page_stack.addWidget(time_tab)         # index 2
 
@@ -1795,6 +1920,96 @@ class NotionSyncApp(QWidget):
         
         self.sync_thread.start()
 
+    def _create_collapsible_header(self, title: str, expanded: bool = True) -> QPushButton:
+        """Create a clickable header button for collapsible sections."""
+        btn = QPushButton()
+        arrow = "▼" if expanded else "▶"
+        btn.setText(f"{arrow} {title}")
+        btn.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding: 8px 12px;
+                font-weight: bold;
+                font-size: 13px;
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 6px;
+                background-color: rgba(255,255,255,0.03);
+            }
+            QPushButton:hover {
+                background-color: rgba(255,255,255,0.06);
+            }
+        """)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setProperty("expanded", expanded)
+        return btn
+
+    def _toggle_collapsible(self, content_widget: QWidget, header_btn: QPushButton):
+        """Toggle visibility of a collapsible section content."""
+        is_visible = content_widget.isVisible()
+        content_widget.setVisible(not is_visible)
+        
+        # Update arrow in button text
+        current_text = header_btn.text()
+        if is_visible:
+            # Collapsing
+            new_text = current_text.replace("▼", "▶")
+        else:
+            # Expanding
+            new_text = current_text.replace("▶", "▼")
+        header_btn.setText(new_text)
+        header_btn.setProperty("expanded", not is_visible)
+
+    def _on_db_choice_changed(self, state):
+        """Handle toggle between main database and custom database."""
+        use_main = self.use_main_db_radio.isChecked()
+        self.export_db_input.setEnabled(not use_main)
+        if use_main:
+            self.export_db_input.setPlaceholderText("Using main database from Credentials tab")
+        else:
+            self.export_db_input.setPlaceholderText("Enter Notion database ID for schedule blocks")
+        self._update_export_controls()
+
+    def _apply_availability_preset(self, preset: str):
+        """Apply a preset to the availability editor widgets."""
+        if preset == 'evenings':
+            # Evenings 6-9 PM, all days enabled
+            for i in range(7):
+                widgets = self.availability_widgets.get(i, {})
+                if widgets:
+                    widgets['start'].setTime(QTime(18, 0))
+                    widgets['end'].setTime(QTime(21, 0))
+                    widgets['enabled'].setChecked(True)
+        elif preset == 'weekends':
+            # Weekends only (Sat=5, Sun=6), longer windows
+            for i in range(7):
+                widgets = self.availability_widgets.get(i, {})
+                if widgets:
+                    if i >= 5:  # Saturday, Sunday
+                        widgets['start'].setTime(QTime(10, 0))
+                        widgets['end'].setTime(QTime(18, 0))
+                        widgets['enabled'].setChecked(True)
+                    else:
+                        widgets['enabled'].setChecked(False)
+        elif preset == 'allday':
+            # All day 9 AM - 5 PM, all days enabled
+            for i in range(7):
+                widgets = self.availability_widgets.get(i, {})
+                if widgets:
+                    widgets['start'].setTime(QTime(9, 0))
+                    widgets['end'].setTime(QTime(17, 0))
+                    widgets['enabled'].setChecked(True)
+
+    def _get_availability_from_ui(self):
+        """Build availability dict from the UI widgets."""
+        weekly = {}
+        for i in range(7):
+            widgets = self.availability_widgets.get(i, {})
+            if widgets and widgets['enabled'].isChecked():
+                start_time = widgets['start'].time().toString("HH:mm")
+                end_time = widgets['end'].time().toString("HH:mm")
+                weekly[str(i)] = [{'start': start_time, 'end': end_time}]
+        return {'weekly': weekly}
+
     def _on_generate_blocks(self, export=False):
         # Disable buttons while running
         self.generate_blocks_btn.setEnabled(False)
@@ -1806,70 +2021,91 @@ class NotionSyncApp(QWidget):
         else:
             base_url = self.canvas_url_input.text().strip()
 
+        # Check for required Canvas key
+        if not canvas_key:
+            self.status_output.append('Error: Please enter your Canvas API key first.')
+            self.generate_blocks_btn.setEnabled(True)
+            self._update_export_controls()
+            return
+
         buckets = [k for k, cb in self.bucket_checkboxes.items() if cb.isChecked()]
         selected_course_ids = self._load_settings_value('selected_course_ids', [])
 
         block_minutes = int(self.block_minutes_spin.value())
         daily_max = int(self.daily_max_spin.value()) if self.daily_max_spin.value() > 0 else None
 
-        availability = None
-        avail_path = self.avail_path_input.text().strip()
-        if avail_path and os.path.exists(avail_path):
-            try:
-                with open(avail_path, 'r') as f: availability = json.load(f)
-            except Exception as e:
-                self.status_output.append(f'Could not read availability file: {e}')
+        # Build availability from UI instead of file
+        availability = self._get_availability_from_ui()
+        
+        # Check if any availability windows are enabled
+        if not availability.get('weekly'):
+            self.status_output.append('Warning: No availability windows enabled. Using default evenings 6-9 PM.')
+            availability = {'weekly': {str(i): [{'start': '18:00', 'end': '21:00'}] for i in range(7)}}
 
         notion_key = self.notion_key_input.text().strip() or keyring.get_password(APP_NAME, 'notion_key')
-        notion_db_id = self.export_db_input.text().strip()
+        notion_db_id = self._get_export_db_id()
 
         # If this invocation requested export, ensure the user explicitly checked
         # the export checkbox and provided a database id.
         if export:
             if not self.export_checkbox.isChecked():
-                self.status_output.append('Export not enabled. Please check "Export to Notion".')
-                # Re-enable UI
+                self.status_output.append('Export not enabled. Please check "Export blocks to Notion".')
                 self.generate_blocks_btn.setEnabled(True)
-                self.export_confirm_btn.setEnabled(True)
+                self._update_export_controls()
                 return
             if not notion_db_id:
-                self.status_output.append('No Notion database id provided. Enter a database id to export.')
+                db_hint = "main database in Credentials" if self.use_main_db_radio.isChecked() else "custom database ID"
+                self.status_output.append(f'No Notion database configured. Please set up your {db_hint}.')
                 self.generate_blocks_btn.setEnabled(True)
-                self.export_confirm_btn.setEnabled(True)
+                self._update_export_controls()
+                return
+            if not notion_key:
+                self.status_output.append('Error: Please enter your Notion API key first.')
+                self.generate_blocks_btn.setEnabled(True)
+                self._update_export_controls()
                 return
 
+        self.status_output.append('Generating time blocks...')
+        
         # Start background worker
         self.timeblock_thread = TimeBlockThread(canvas_key, base_url, buckets, selected_course_ids, block_minutes, daily_max, availability, notion_key, notion_db_id, export)
         self.timeblock_thread.finished.connect(self._on_timeblock_finished)
         self.timeblock_thread.start()
 
-        # Maintain export button enabled state based on user controls
-        try:
-            self.export_checkbox.stateChanged.connect(lambda _: self._update_export_controls())
-            self.export_db_input.textChanged.connect(lambda _: self._update_export_controls())
-        except Exception:
-            pass
-        # Ensure initial state is correct
-        try:
-            self._update_export_controls()
-        except Exception:
-            pass
-
     def _update_export_controls(self):
-        """Enable the Generate & Export button only when the user opted in and provided a DB id."""
+        """Enable the Generate & Export button only when the user opted in and has a valid DB."""
         try:
             enabled = False
-            if getattr(self, 'export_checkbox', None):
-                enabled = self.export_checkbox.isChecked() and bool(self.export_db_input.text().strip())
+            if getattr(self, 'export_checkbox', None) and self.export_checkbox.isChecked():
+                # Check if using main DB or custom DB
+                if getattr(self, 'use_main_db_radio', None) and self.use_main_db_radio.isChecked():
+                    # Using main database - check if main DB is configured
+                    main_db = self.notion_db_input.text().strip() if hasattr(self, 'notion_db_input') else ''
+                    enabled = bool(main_db)
+                else:
+                    # Using custom database - check if custom DB is entered
+                    enabled = bool(self.export_db_input.text().strip())
             self.export_confirm_btn.setEnabled(enabled)
         except Exception:
             pass
+
+    def _get_export_db_id(self):
+        """Get the database ID to use for export based on user's choice."""
+        try:
+            if getattr(self, 'use_main_db_radio', None) and self.use_main_db_radio.isChecked():
+                # Use main database from credentials
+                return self.notion_db_input.text().strip() if hasattr(self, 'notion_db_input') else ''
+            else:
+                # Use custom database
+                return self.export_db_input.text().strip()
+        except Exception:
+            return self.export_db_input.text().strip()
 
     def _on_timeblock_finished(self, blocks, message):
         # Re-enable buttons
         try:
             self.generate_blocks_btn.setEnabled(True)
-            self.export_confirm_btn.setEnabled(True)
+            self._update_export_controls()
         except Exception:
             pass
 
@@ -1878,11 +2114,91 @@ class NotionSyncApp(QWidget):
             self.status_output.append(message)
             return
 
-        # Show summary and first few blocks
-        preview = [f"{len(blocks)} blocks planned. {message}\n"]
-        for b in blocks[:10]:
-            preview.append(json.dumps(b, indent=2))
-        self.blocks_preview.setPlainText('\n\n'.join(preview))
+        # Format blocks in a human-readable way
+        from dateutil import parser as dateparser
+        from datetime import timezone, datetime as dt
+        from collections import OrderedDict
+        
+        today = dt.now(timezone.utc).astimezone().date()
+        
+        # Group blocks by assignment name (preserve order)
+        grouped = OrderedDict()
+        for b in blocks:
+            name = b.get('name', 'Unnamed')
+            if name not in grouped:
+                grouped[name] = {
+                    'blocks': [],
+                    'course': b.get('course', ''),
+                    'points': b.get('points'),
+                    'due_date': b.get('due_date'),
+                    'total_blocks': b.get('total_blocks', 1)
+                }
+            grouped[name]['blocks'].append(b)
+        
+        preview_lines = [f"✅ {len(blocks)} blocks for {len(grouped)} assignments\n"]
+        
+        for name, data in list(grouped.items())[:10]:
+            course = data['course']
+            pts = data['points']
+            due = data['due_date']
+            blks = data['blocks']
+            
+            # Calculate urgency based on first block's scheduled date
+            urgency = ""
+            try:
+                first_start = dateparser.isoparse(blks[0].get('start')).astimezone()
+                days_until = (first_start.date() - today).days
+                if days_until <= 0:
+                    urgency = "🔴"
+                elif days_until <= 2:
+                    urgency = "🟠"
+                elif days_until <= 5:
+                    urgency = "🟡"
+                else:
+                    urgency = "🟢"
+            except:
+                pass
+            
+            # Header line with name and urgency
+            pts_str = f"{int(pts)}pts" if pts else ""
+            preview_lines.append(f"{urgency} {name[:42]}{'...' if len(name) > 42 else ''}")
+            
+            # Info line: course, points, due date
+            info_parts = []
+            if course:
+                info_parts.append(course[:20])
+            if pts_str:
+                info_parts.append(pts_str)
+            if due:
+                info_parts.append(f"Due: {due}")
+            preview_lines.append(f"   {' | '.join(info_parts)}")
+            
+            # Show scheduled times compactly (sorted chronologically)
+            time_strs = []
+            sorted_blocks = sorted(blks, key=lambda x: x.get('start', ''))
+            for b in sorted_blocks:
+                try:
+                    start_dt = dateparser.isoparse(b.get('start')).astimezone()
+                    time_strs.append(start_dt.strftime('%a %d %H:%M'))
+                except:
+                    pass
+            
+            if time_strs:
+                # Show up to 4 times on one line
+                if len(time_strs) <= 4:
+                    preview_lines.append(f"   📅 {' → '.join(time_strs)}")
+                else:
+                    preview_lines.append(f"   📅 {' → '.join(time_strs[:3])} +{len(time_strs)-3} more")
+            
+            preview_lines.append("")  # Blank line between assignments
+        
+        if len(grouped) > 10:
+            preview_lines.append(f"... and {len(grouped) - 10} more assignments")
+        
+        preview_lines.append("─" * 45)
+        preview_lines.append(message)
+        
+        self.blocks_preview.setPlainText('\n'.join(preview_lines))
         self.status_output.append(message)
 
 # --- Platform-specific and background functions (Unchanged) ---
