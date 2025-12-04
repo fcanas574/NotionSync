@@ -56,7 +56,6 @@
 | `Ctrl+R` | Run sync |
 | `Ctrl+1` | Assignments tab |
 | `Ctrl+2` | Timeblocker tab |
-| `Ctrl+3` | Logs tab |
 | `Ctrl+,` | Open settings |
 | `Ctrl+T` | Test connections |
 | `Ctrl+Q` | Quit |

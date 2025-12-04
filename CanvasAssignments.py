@@ -109,8 +109,7 @@ TRANSLATIONS = {
         'notion_key_label': "Notion API Key:", 'notion_key_placeholder': "Enter Notion API Key",
         'notion_db_label': "Notion Database ID:", 'notion_db_placeholder': "Enter Notion Database ID or URL",
         'help_tooltip': "Help: How to get API Keys", 'run_sync_button': "Run Manual Sync",
-        'tab_credentials': "Credentials & Sync", 'tab_scheduler': "Scheduler",
-        'scheduler_label': "Set daily sync time (24-hour format):",
+        'tab_credentials': "Credentials & Sync",
         'startup_checkbox': "Start automatically on login",
         'sync_error_all_fields': "Error: All fields are required. Click the help button for setup instructions.",
         'tray_tooltip': "Canvas to Notion Sync", 'tray_run_sync': "Run Manual Sync",
@@ -135,8 +134,7 @@ TRANSLATIONS = {
         'notion_key_label': "Clave API de Notion:", 'notion_key_placeholder': "Ingresa la Clave API de Notion",
         'notion_db_label': "ID de Base de Datos de Notion:", 'notion_db_placeholder': "Ingresa el ID o la URL de la Base de Datos de Notion",
         'help_tooltip': "Ayuda: Cómo obtener Claves API", 'run_sync_button': "Ejecutar Sincronización Manual",
-        'tab_credentials': "Credenciales y Sincronización", 'tab_scheduler': "Programador",
-        'scheduler_label': "Establecer hora de sincronización diaria (formato 24h):",
+        'tab_credentials': "Credenciales y Sincronización",
         'startup_checkbox': "Iniciar automáticamente al iniciar sesión",
         'sync_error_all_fields': "Error: Todos los campos son requeridos. Haz clic en el botón de ayuda para instrucciones.",
         'tray_tooltip': "Sincronización de Canvas a Notion", 'tray_run_sync': "Ejecutar Sincronización Manual",
@@ -595,8 +593,7 @@ class SettingsDialog(QDialog):
         self.current_shortcuts = current_shortcuts if current_shortcuts else {
             'sync': 'Ctrl+R',
             'tab1': 'Ctrl+1',
-            'tab2': 'Ctrl+2', 
-            'tab3': 'Ctrl+3',
+            'tab2': 'Ctrl+2',
             'settings': 'Ctrl+,',
             'test': 'Ctrl+T',
             'quit': 'Ctrl+Q'
@@ -606,8 +603,7 @@ class SettingsDialog(QDialog):
         shortcut_labels = {
             'sync': 'Sync Assignments:',
             'tab1': 'Tab 1 (Credentials):',
-            'tab2': 'Tab 2 (Scheduler):',
-            'tab3': 'Tab 3 (Timeblocker):',
+            'tab2': 'Tab 2 (Timeblocker):',
             'settings': 'Open Settings:',
             'test': 'Test Connections:',
             'quit': 'Quit App:'
@@ -1497,22 +1493,17 @@ class NotionSyncApp(QWidget):
         help_layout.addWidget(self.help_button)
         cred_layout.addLayout(help_layout) 
         
-        scheduler_tab = QWidget()
-        sched_layout = QVBoxLayout(scheduler_tab)
-        sched_layout.addWidget(QLabel(T['scheduler_label']))
-        self.time_edit = QTimeEdit(); self.time_edit.setDisplayFormat("HH:mm")
+        # Keep time_edit for settings dialog compatibility (hidden)
+        self.time_edit = QTimeEdit()
+        self.time_edit.setDisplayFormat("HH:mm")
         self.time_edit.timeChanged.connect(lambda time: self._save_settings('sync_time', time.toString("HH:mm")))
-        sched_layout.addWidget(self.time_edit)
-
-        # Scheduler tab layout (kept minimal) — sync buckets moved into Settings dialog
-        # Keep an attribute for bucket_checkboxes state so other code can read/write
+        self.time_edit.setVisible(False)
+        
+        # Keep bucket_checkboxes for compatibility
         self.bucket_checkboxes = {}
-        # Leave any detailed UI for the settings dialog
-        sched_layout.addStretch()
         
         # Add pages to stacked widget instead of tabs
         self.page_stack.addWidget(credentials_tab)  # index 0
-        self.page_stack.addWidget(scheduler_tab)    # index 1
         # --- Time Blocks Page (new) ---
         time_tab = QWidget()
         time_layout = QVBoxLayout(time_tab)
@@ -1785,7 +1776,7 @@ class NotionSyncApp(QWidget):
         sidebar_layout.setContentsMargins(8, 8, 8, 8)
         sidebar_layout.setSpacing(8)
 
-        # Navigation buttons (Assignment Sync, Scheduler, Timeblocker)
+        # Navigation buttons (Assignment Sync, Timeblocker)
         nav_container = QWidget()
         nav_layout = QVBoxLayout(nav_container)
         nav_layout.setContentsMargins(0, 0, 0, 0)
@@ -1826,7 +1817,6 @@ class NotionSyncApp(QWidget):
 
         self.nav_buttons = []
         btn_assign = QPushButton('Assignment Sync')
-        btn_sched = QPushButton('Scheduler')
         btn_time = QPushButton('Timeblocker')
 
         # Load icons for nav buttons if available
@@ -1835,10 +1825,6 @@ class NotionSyncApp(QWidget):
             if os.path.exists(sync_icon_path):
                 btn_assign.setIcon(QIcon(sync_icon_path))
                 btn_assign.setIconSize(QSize(18, 18))
-            sched_icon_path = resource_path('schedule.png')
-            if os.path.exists(sched_icon_path):
-                btn_sched.setIcon(QIcon(sched_icon_path))
-                btn_sched.setIconSize(QSize(18, 18))
             time_icon_path = resource_path('book_ribbon.png')
             if os.path.exists(time_icon_path):
                 btn_time.setIcon(QIcon(time_icon_path))
@@ -1846,7 +1832,7 @@ class NotionSyncApp(QWidget):
         except Exception:
             pass
 
-        for b in (btn_assign, btn_sched, btn_time):
+        for b in (btn_assign, btn_time):
             b.setCheckable(True)
             b.setMinimumHeight(36)
             b.setFixedHeight(36)  # Keep height consistent during collapse/expand
@@ -2089,8 +2075,7 @@ class NotionSyncApp(QWidget):
                 pass
 
         btn_assign.clicked.connect(lambda: _switch_to(0))
-        btn_sched.clicked.connect(lambda: _switch_to(1))
-        btn_time.clicked.connect(lambda: _switch_to(2))
+        btn_time.clicked.connect(lambda: _switch_to(1))
 
         # Create hidden startup and advanced toggles as attributes (UI moved to Settings dialog)
         # Keep them as objects so existing code that reads/writes their state continues to work.
@@ -2186,7 +2171,6 @@ class NotionSyncApp(QWidget):
             'sync': lambda: self._on_sync_clicked(),
             'tab1': lambda: self._switch_to_func(0),
             'tab2': lambda: self._switch_to_func(1),
-            'tab3': lambda: self._switch_to_func(2),
             'settings': lambda: self._open_settings_dialog(),
             'test': lambda: (self._test_canvas_connection(), self._test_notion_connection()),
             'quit': lambda: QApplication.quit()
