@@ -224,23 +224,6 @@ Output: `build/NotionSync/` and `dist/`
 
 ---
 
-## Contributing
-
-Contributions are welcome! Here's how to help:
-
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
-
-### Guidelines
-- Keep PRs focused and small
-- Test your changes before submitting
-- Update documentation if needed
-
----
-
 ## Roadmap
 
 - [ ] Grade/score sync from Canvas
