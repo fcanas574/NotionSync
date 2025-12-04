@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon, QMenu, QTimeEdit, QCheckBox, QTabWidget, QTabBar,
     QComboBox, QGroupBox, QStackedWidget, QButtonGroup, QSizePolicy # --- NEW: Added QComboBox, QStackedWidget, QButtonGroup and QSizePolicy ---
 )
-from PyQt6.QtGui import QIcon, QAction, QFontDatabase, QFont, QPixmap, QPainter, QColor, QPolygonF
+from PyQt6.QtGui import QIcon, QAction, QFontDatabase, QFont, QPixmap, QPainter, QColor, QPolygonF, QShortcut, QKeySequence
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTime, QPointF, QSize, QTimer, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QObject, pyqtProperty
 from PyQt6.QtWidgets import QGraphicsOpacityEffect
 
@@ -457,38 +457,65 @@ class SettingsDialog(QDialog):
     toggle-list instead of the sync blocks button. Values are exposed as
     attributes after the dialog is accepted.
     """
-    def __init__(self, parent=None, startup_checked=False, advanced_checked=False, current_buckets=None, current_theme='auto'):
+    def __init__(self, parent=None, startup_checked=False, advanced_checked=False, current_buckets=None, current_theme='auto', current_shortcuts=None, current_notifications=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setModal(True)
-        self.resize(520, 480)  # Slightly taller to fit theme selector
+        self.resize(520, 600)
 
         self.selected_buckets = current_buckets or []
+        
+        # Load notification preferences
+        self.current_notifications = current_notifications if current_notifications else {
+            'enabled': True,
+            'on_success': True,
+            'on_error': True,
+            'on_timeblock': True,
+            'sound': False
+        }
 
-        layout = QVBoxLayout(self)
+        # Use scroll area for the settings
+        from PyQt6.QtWidgets import QScrollArea
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
+        layout.setSpacing(8)
 
-        # --- Theme Selection (NEW) ---
-        theme_group = QGroupBox('Appearance')
-        theme_layout = QHBoxLayout()
-        theme_layout.addWidget(QLabel('Theme:'))
+        # --- General Settings (collapsible) ---
+        general_header = self._create_settings_header("⚙️ General", expanded=True)
+        general_content = QWidget()
+        general_layout = QVBoxLayout(general_content)
+        general_layout.setContentsMargins(16, 8, 8, 8)
+        
+        # Theme row
+        theme_row = QHBoxLayout()
+        theme_row.addWidget(QLabel('Theme:'))
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(['Auto', 'Light', 'Dark'])
-        # Set current selection based on saved value
         theme_map = {'auto': 0, 'light': 1, 'dark': 2}
         self.theme_combo.setCurrentIndex(theme_map.get(current_theme.lower(), 0))
-        theme_layout.addWidget(self.theme_combo)
-        theme_layout.addStretch()
-        theme_group.setLayout(theme_layout)
-        layout.addWidget(theme_group)
-
+        theme_row.addWidget(self.theme_combo)
+        theme_row.addStretch()
+        general_layout.addLayout(theme_row)
+        
         # Startup toggle
         self.startup_cb = QCheckBox(T['startup_checkbox'])
         self.startup_cb.setChecked(startup_checked)
-        layout.addWidget(self.startup_cb)
+        general_layout.addWidget(self.startup_cb)
+        
+        general_header.clicked.connect(lambda: self._toggle_settings_section(general_content, general_header))
+        layout.addWidget(general_header)
+        layout.addWidget(general_content)
 
-        # Sync Scope (Buckets) - move here from Scheduler
-        scope_group = QGroupBox(T['sync_scope_label'])
-        scope_layout = QVBoxLayout()
+        # --- Sync Scope (collapsible) ---
+        scope_header = self._create_settings_header("📋 " + T['sync_scope_label'], expanded=False)
+        scope_content = QWidget()
+        scope_content.setVisible(False)
+        scope_layout = QVBoxLayout(scope_content)
+        scope_layout.setContentsMargins(16, 8, 8, 8)
 
         self.bucket_checkboxes = {}
         buckets = [
@@ -505,7 +532,6 @@ class SettingsDialog(QDialog):
             self.bucket_checkboxes[key] = cb
             scope_layout.addWidget(cb)
 
-        # Select all for convenience
         select_all_row = QHBoxLayout()
         select_all_btn = QPushButton('Select All')
         select_all_btn.clicked.connect(lambda: [cb.setChecked(True) for cb in self.bucket_checkboxes.values()])
@@ -513,19 +539,130 @@ class SettingsDialog(QDialog):
         select_all_row.addStretch()
         scope_layout.addLayout(select_all_row)
 
-        scope_group.setLayout(scope_layout)
-        layout.addWidget(scope_group)
+        scope_header.clicked.connect(lambda: self._toggle_settings_section(scope_content, scope_header))
+        layout.addWidget(scope_header)
+        layout.addWidget(scope_content)
 
-        # Advanced features as a toggle list (replace single advanced checkbox)
-        adv_group = QGroupBox('Advanced Features')
-        adv_layout = QVBoxLayout()
-        # For now we expose the existing 'show_advanced' flag as a toggle inside
-        # the list; future advanced toggles may be added here.
+        # --- Notifications (collapsible) ---
+        notif_header = self._create_settings_header("🔔 Notifications", expanded=False)
+        notif_content = QWidget()
+        notif_content.setVisible(False)
+        notif_layout = QVBoxLayout(notif_content)
+        notif_layout.setContentsMargins(16, 8, 8, 8)
+        notif_layout.setSpacing(4)
+        
+        self.notif_enabled_cb = QCheckBox('Enable notifications')
+        self.notif_enabled_cb.setChecked(self.current_notifications.get('enabled', True))
+        self.notif_enabled_cb.stateChanged.connect(self._toggle_notif_options)
+        notif_layout.addWidget(self.notif_enabled_cb)
+        
+        self.notif_options_widget = QWidget()
+        notif_options_layout = QVBoxLayout(self.notif_options_widget)
+        notif_options_layout.setContentsMargins(20, 0, 0, 0)
+        notif_options_layout.setSpacing(2)
+        
+        self.notif_success_cb = QCheckBox('On successful sync')
+        self.notif_success_cb.setChecked(self.current_notifications.get('on_success', True))
+        notif_options_layout.addWidget(self.notif_success_cb)
+        
+        self.notif_error_cb = QCheckBox('On sync errors')
+        self.notif_error_cb.setChecked(self.current_notifications.get('on_error', True))
+        notif_options_layout.addWidget(self.notif_error_cb)
+        
+        self.notif_timeblock_cb = QCheckBox('On time block generation')
+        self.notif_timeblock_cb.setChecked(self.current_notifications.get('on_timeblock', True))
+        notif_options_layout.addWidget(self.notif_timeblock_cb)
+        
+        self.notif_sound_cb = QCheckBox('Play sound with notifications')
+        self.notif_sound_cb.setChecked(self.current_notifications.get('sound', False))
+        notif_options_layout.addWidget(self.notif_sound_cb)
+        
+        notif_layout.addWidget(self.notif_options_widget)
+        self.notif_options_widget.setEnabled(self.current_notifications.get('enabled', True))
+        
+        notif_header.clicked.connect(lambda: self._toggle_settings_section(notif_content, notif_header))
+        layout.addWidget(notif_header)
+        layout.addWidget(notif_content)
+
+        # --- Keyboard Shortcuts (collapsible) ---
+        shortcuts_header = self._create_settings_header("⌨️ Keyboard Shortcuts", expanded=False)
+        shortcuts_content = QWidget()
+        shortcuts_content.setVisible(False)
+        shortcuts_layout = QVBoxLayout(shortcuts_content)
+        shortcuts_layout.setContentsMargins(16, 8, 8, 8)
+        shortcuts_layout.setSpacing(6)
+        
+        self.current_shortcuts = current_shortcuts if current_shortcuts else {
+            'sync': 'Ctrl+R',
+            'tab1': 'Ctrl+1',
+            'tab2': 'Ctrl+2', 
+            'tab3': 'Ctrl+3',
+            'settings': 'Ctrl+,',
+            'test': 'Ctrl+T',
+            'quit': 'Ctrl+Q'
+        }
+        
+        self.shortcut_edits = {}
+        shortcut_labels = {
+            'sync': 'Sync Assignments:',
+            'tab1': 'Tab 1 (Credentials):',
+            'tab2': 'Tab 2 (Scheduler):',
+            'tab3': 'Tab 3 (Timeblocker):',
+            'settings': 'Open Settings:',
+            'test': 'Test Connections:',
+            'quit': 'Quit App:'
+        }
+        
+        from PyQt6.QtWidgets import QGridLayout
+        shortcuts_grid = QGridLayout()
+        shortcuts_grid.setColumnStretch(1, 1)
+        
+        row = 0
+        for key, label in shortcut_labels.items():
+            lbl = QLabel(label)
+            edit = QLineEdit(self.current_shortcuts.get(key, ''))
+            edit.setPlaceholderText('Press keys...')
+            edit.setFixedWidth(100)
+            edit.setToolTip('Click and press your desired key combination')
+            edit.installEventFilter(self)
+            edit.setProperty('shortcut_key', key)
+            self.shortcut_edits[key] = edit
+            shortcuts_grid.addWidget(lbl, row, 0)
+            shortcuts_grid.addWidget(edit, row, 1)
+            row += 1
+        
+        reset_btn = QPushButton('Reset to Defaults')
+        reset_btn.clicked.connect(self._reset_shortcuts)
+        shortcuts_grid.addWidget(reset_btn, row, 0, 1, 2)
+        
+        shortcuts_layout.addLayout(shortcuts_grid)
+        
+        shortcuts_header.clicked.connect(lambda: self._toggle_settings_section(shortcuts_content, shortcuts_header))
+        layout.addWidget(shortcuts_header)
+        layout.addWidget(shortcuts_content)
+
+        # --- Advanced (collapsible) ---
+        adv_header = self._create_settings_header("🔧 Advanced", expanded=False)
+        adv_content = QWidget()
+        adv_content.setVisible(False)
+        adv_layout = QVBoxLayout(adv_content)
+        adv_layout.setContentsMargins(16, 8, 8, 8)
+        
         self.adv_show_advanced = QCheckBox('Show Advanced Settings')
         self.adv_show_advanced.setChecked(advanced_checked)
         adv_layout.addWidget(self.adv_show_advanced)
-        adv_group.setLayout(adv_layout)
-        layout.addWidget(adv_group)
+        
+        adv_header.clicked.connect(lambda: self._toggle_settings_section(adv_content, adv_header))
+        layout.addWidget(adv_header)
+        layout.addWidget(adv_content)
+        
+        layout.addStretch()
+        
+        scroll.setWidget(scroll_content)
+        
+        # Main dialog layout
+        main_layout = QVBoxLayout(self)
+        main_layout.addWidget(scroll, 1)
 
         # Footer buttons
         foot = QHBoxLayout()
@@ -534,10 +671,98 @@ class SettingsDialog(QDialog):
         close_btn = QPushButton(T['help_close'])
         foot.addWidget(apply_btn)
         foot.addWidget(close_btn)
-        layout.addLayout(foot)
+        main_layout.addLayout(foot)
 
         close_btn.clicked.connect(self.reject)
         apply_btn.clicked.connect(self._on_apply)
+
+    def _create_settings_header(self, title: str, expanded: bool = True) -> QPushButton:
+        """Create a collapsible header button for settings sections."""
+        arrow = "▼" if expanded else "▶"
+        btn = QPushButton(f" {arrow}  {title}")
+        btn.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding: 8px 12px;
+                font-weight: bold;
+                font-size: 12px;
+                border: none;
+                border-radius: 6px;
+                background-color: rgba(128, 128, 128, 0.1);
+            }
+            QPushButton:hover {
+                background-color: rgba(128, 128, 128, 0.2);
+            }
+        """)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setProperty("expanded", expanded)
+        return btn
+
+    def _toggle_settings_section(self, content_widget: QWidget, header_btn: QPushButton):
+        """Toggle visibility of a settings section."""
+        is_visible = content_widget.isVisible()
+        content_widget.setVisible(not is_visible)
+        current_text = header_btn.text()
+        if is_visible:
+            new_text = current_text.replace("▼", "▶")
+        else:
+            new_text = current_text.replace("▶", "▼")
+        header_btn.setText(new_text)
+        header_btn.setProperty("expanded", not is_visible)
+
+    def eventFilter(self, obj, event):
+        """Capture key press events for shortcut editing."""
+        from PyQt6.QtCore import QEvent
+        if event.type() == QEvent.Type.KeyPress and hasattr(obj, 'property'):
+            shortcut_key = obj.property('shortcut_key')
+            if shortcut_key and shortcut_key in self.shortcut_edits:
+                # Build the key sequence string
+                key = event.key()
+                modifiers = event.modifiers()
+                
+                # Skip lone modifier keys
+                from PyQt6.QtCore import Qt
+                if key in (Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta):
+                    return True
+                
+                parts = []
+                if modifiers & Qt.KeyboardModifier.ControlModifier:
+                    parts.append('Ctrl')
+                if modifiers & Qt.KeyboardModifier.AltModifier:
+                    parts.append('Alt')
+                if modifiers & Qt.KeyboardModifier.ShiftModifier:
+                    parts.append('Shift')
+                if modifiers & Qt.KeyboardModifier.MetaModifier:
+                    parts.append('Meta')
+                
+                # Get key name
+                key_text = QKeySequence(key).toString()
+                if key_text:
+                    parts.append(key_text)
+                
+                if parts:
+                    sequence = '+'.join(parts)
+                    obj.setText(sequence)
+                return True
+        return super().eventFilter(obj, event)
+
+    def _reset_shortcuts(self):
+        """Reset all shortcuts to defaults."""
+        defaults = {
+            'sync': 'Ctrl+R',
+            'tab1': 'Ctrl+1',
+            'tab2': 'Ctrl+2',
+            'tab3': 'Ctrl+3',
+            'settings': 'Ctrl+,',
+            'test': 'Ctrl+T',
+            'quit': 'Ctrl+Q'
+        }
+        for key, edit in self.shortcut_edits.items():
+            edit.setText(defaults.get(key, ''))
+
+    def _toggle_notif_options(self, state):
+        """Enable/disable notification sub-options based on main toggle."""
+        self.notif_options_widget.setEnabled(state == Qt.CheckState.Checked.value)
 
     def _on_apply(self):
         # Collect selected buckets and advanced flags
@@ -553,12 +778,28 @@ class SettingsDialog(QDialog):
             self.advanced_flags = {'show_advanced': bool(self.adv_show_advanced.isChecked())}
         except Exception:
             self.advanced_flags = {'show_advanced': False}
-        # --- Theme selection (NEW) ---
+        # --- Theme selection ---
         try:
             theme_index = self.theme_combo.currentIndex()
             self.theme_mode = ['auto', 'light', 'dark'][theme_index]
         except Exception:
             self.theme_mode = 'auto'
+        # --- Keyboard shortcuts ---
+        try:
+            self.shortcuts = {key: edit.text() for key, edit in self.shortcut_edits.items()}
+        except Exception:
+            self.shortcuts = {}
+        # --- Notification preferences ---
+        try:
+            self.notifications = {
+                'enabled': self.notif_enabled_cb.isChecked(),
+                'on_success': self.notif_success_cb.isChecked(),
+                'on_error': self.notif_error_cb.isChecked(),
+                'on_timeblock': self.notif_timeblock_cb.isChecked(),
+                'sound': self.notif_sound_cb.isChecked()
+            }
+        except Exception:
+            self.notifications = {'enabled': True, 'on_success': True, 'on_error': True, 'on_timeblock': True, 'sound': False}
         self.accept()
 
 
@@ -789,6 +1030,10 @@ class NotionSyncApp(QWidget):
         # --- FIX: Use safe, global path ---
         self.credentials_file = credentials_file_path
         self.tray_icon = None # Will be assigned later
+        # Initialize notification preferences
+        self.notification_prefs = {
+            'enabled': True, 'on_success': True, 'on_error': True, 'on_timeblock': True, 'sound': False
+        }
         self._setup_ui()
         self._load_settings()
 
@@ -877,6 +1122,14 @@ class NotionSyncApp(QWidget):
                 self._update_course_summary()
             except Exception:
                 pass
+            
+            # Load notification preferences
+            try:
+                self.notification_prefs = data.get("notifications", {
+                    'enabled': True, 'on_success': True, 'on_error': True, 'on_timeblock': True, 'sound': False
+                })
+            except Exception:
+                pass
 
         except Exception: pass
 
@@ -906,6 +1159,67 @@ class NotionSyncApp(QWidget):
         except Exception: 
             return default
 
+    # --- Notification Helper ---
+    def _show_notification(self, title, message, notif_type='info', category='success'):
+        """Show a notification respecting user preferences.
+        
+        Args:
+            title: Notification title
+            message: Notification message  
+            notif_type: 'info', 'warning', or 'error'
+            category: 'success', 'error', or 'timeblock' - determines if notification should show
+        """
+        if not self.tray_icon:
+            return
+        
+        prefs = getattr(self, 'notification_prefs', {})
+        
+        # Check if notifications are enabled
+        if not prefs.get('enabled', True):
+            return
+        
+        # Check category-specific setting
+        category_map = {
+            'success': 'on_success',
+            'error': 'on_error',
+            'timeblock': 'on_timeblock'
+        }
+        if not prefs.get(category_map.get(category, 'on_success'), True):
+            return
+        
+        # Map notification type to icon
+        icon_map = {
+            'info': QSystemTrayIcon.MessageIcon.Information,
+            'warning': QSystemTrayIcon.MessageIcon.Warning,
+            'error': QSystemTrayIcon.MessageIcon.Critical
+        }
+        icon = icon_map.get(notif_type, QSystemTrayIcon.MessageIcon.Information)
+        
+        # Play sound if enabled (cross-platform)
+        if prefs.get('sound', False):
+            try:
+                if sys.platform == 'darwin':  # macOS
+                    import subprocess
+                    subprocess.run(['afplay', '/System/Library/Sounds/Glass.aiff'], check=False)
+                elif sys.platform == 'win32':  # Windows
+                    import winsound
+                    winsound.MessageBeep(winsound.MB_ICONINFORMATION)
+                else:  # Linux
+                    import subprocess
+                    # Try common Linux sound players
+                    for cmd in [['paplay', '/usr/share/sounds/freedesktop/stereo/complete.oga'],
+                                ['aplay', '/usr/share/sounds/alsa/Front_Center.wav'],
+                                ['canberra-gtk-play', '-i', 'message']]:
+                        try:
+                            subprocess.run(cmd, check=False, capture_output=True)
+                            break
+                        except FileNotFoundError:
+                            continue
+            except Exception:
+                pass
+        
+        self.tray_icon.showMessage(title, message, icon, 3000)
+
     # --- NEW: Slot to mark first sync as done ---
     def _mark_first_sync_complete(self):
         # Only mark as complete if it wasn't already
@@ -915,8 +1229,7 @@ class NotionSyncApp(QWidget):
 
     def _on_sync_success(self):
         self._mark_first_sync_complete()
-        if self.tray_icon:
-            self.tray_icon.showMessage(T['notification_success_title'], T['notification_success_msg'], QSystemTrayIcon.MessageIcon.Information, 3000)
+        self._show_notification(T['notification_success_title'], T['notification_success_msg'], 'info', 'success')
 
     def _on_load_courses(self):
         # Start a small thread to fetch courses and display a dialog for selection
@@ -993,8 +1306,7 @@ class NotionSyncApp(QWidget):
         loader.start()
 
     def _on_sync_fail(self):
-        if self.tray_icon:
-            self.tray_icon.showMessage(T['notification_fail_title'], T['notification_fail_msg'], QSystemTrayIcon.MessageIcon.Warning, 3000)
+        self._show_notification(T['notification_fail_title'], T['notification_fail_msg'], 'warning', 'error')
 
     def _show_help_dialog(self):
         dialog = HelpDialog(lang=self.lang, parent=self) 
@@ -1215,29 +1527,85 @@ class NotionSyncApp(QWidget):
         time_layout.addWidget(desc_label)
 
         # Import needed widgets
-        from PyQt6.QtWidgets import QSpinBox, QScrollArea, QFrame
+        from PyQt6.QtWidgets import QSpinBox, QScrollArea, QFrame, QDoubleSpinBox, QGridLayout
 
         # --- Collapsible Block Settings ---
         settings_header = self._create_collapsible_header("⚙️ Block Settings", expanded=True)
         settings_content = QWidget()
-        settings_content_layout = QHBoxLayout(settings_content)
+        settings_content_layout = QVBoxLayout(settings_content)
         settings_content_layout.setContentsMargins(16, 8, 8, 8)
         
-        settings_content_layout.addWidget(QLabel("Block length (min):"))
+        # Basic settings row
+        basic_row = QHBoxLayout()
+        basic_row.addWidget(QLabel("Block length (min):"))
         self.block_minutes_spin = QSpinBox()
         self.block_minutes_spin.setRange(15, 480)
         self.block_minutes_spin.setValue(90)
+        self.block_minutes_spin.setFixedWidth(70)
         self.block_minutes_spin.setToolTip("Duration of each study block in minutes")
-        settings_content_layout.addWidget(self.block_minutes_spin)
+        basic_row.addWidget(self.block_minutes_spin)
 
-        settings_content_layout.addWidget(QLabel("Daily max (min):"))
+        basic_row.addSpacing(20)
+        basic_row.addWidget(QLabel("Daily max (min):"))
         self.daily_max_spin = QSpinBox()
         self.daily_max_spin.setRange(0, 1440)
         self.daily_max_spin.setValue(240)
+        self.daily_max_spin.setFixedWidth(70)
         self.daily_max_spin.setSpecialValueText("No limit")
         self.daily_max_spin.setToolTip("Maximum study minutes per day (0 = no limit)")
-        settings_content_layout.addWidget(self.daily_max_spin)
-        settings_content_layout.addStretch()
+        basic_row.addWidget(self.daily_max_spin)
+        basic_row.addStretch()
+        settings_content_layout.addLayout(basic_row)
+        
+        # Priority scoring parameters section using grid layout for better resizing
+        scoring_label = QLabel("Priority Scoring:")
+        scoring_label.setStyleSheet("color: #888; font-size: 11px; margin-top: 8px;")
+        settings_content_layout.addWidget(scoring_label)
+        
+        scoring_grid = QGridLayout()
+        scoring_grid.setSpacing(8)
+        scoring_grid.setColumnStretch(1, 0)
+        scoring_grid.setColumnStretch(3, 0)
+        scoring_grid.setColumnStretch(4, 1)  # Stretch last column
+        
+        # Row 0: Points Weight and Urgency Weight
+        scoring_grid.addWidget(QLabel("Points Weight:"), 0, 0)
+        self.points_weight_spin = QDoubleSpinBox()
+        self.points_weight_spin.setRange(0.0, 5.0)
+        self.points_weight_spin.setValue(1.0)
+        self.points_weight_spin.setSingleStep(0.1)
+        self.points_weight_spin.setFixedWidth(60)
+        self.points_weight_spin.setToolTip("Weight for assignment points in priority score")
+        scoring_grid.addWidget(self.points_weight_spin, 0, 1)
+        
+        scoring_grid.addWidget(QLabel("Urgency Weight:"), 0, 2)
+        self.urgency_weight_spin = QDoubleSpinBox()
+        self.urgency_weight_spin.setRange(0.0, 5.0)
+        self.urgency_weight_spin.setValue(1.5)
+        self.urgency_weight_spin.setSingleStep(0.1)
+        self.urgency_weight_spin.setFixedWidth(60)
+        self.urgency_weight_spin.setToolTip("Weight for deadline urgency (higher = prioritize sooner deadlines)")
+        scoring_grid.addWidget(self.urgency_weight_spin, 0, 3)
+        
+        # Row 1: Max Blocks and Exam Bonus
+        scoring_grid.addWidget(QLabel("Max Blocks:"), 1, 0)
+        self.max_blocks_spin = QSpinBox()
+        self.max_blocks_spin.setRange(1, 20)
+        self.max_blocks_spin.setValue(4)
+        self.max_blocks_spin.setFixedWidth(60)
+        self.max_blocks_spin.setToolTip("Maximum number of blocks per assignment")
+        scoring_grid.addWidget(self.max_blocks_spin, 1, 1)
+        
+        scoring_grid.addWidget(QLabel("Exam Bonus:"), 1, 2)
+        self.exam_bonus_spin = QDoubleSpinBox()
+        self.exam_bonus_spin.setRange(0.0, 100.0)
+        self.exam_bonus_spin.setValue(20.0)
+        self.exam_bonus_spin.setSingleStep(5.0)
+        self.exam_bonus_spin.setFixedWidth(60)
+        self.exam_bonus_spin.setToolTip("Extra priority points for exams/quizzes")
+        scoring_grid.addWidget(self.exam_bonus_spin, 1, 3)
+        
+        settings_content_layout.addLayout(scoring_grid)
 
         settings_header.clicked.connect(lambda: self._toggle_collapsible(settings_content, settings_header))
         time_layout.addWidget(settings_header)
@@ -1347,7 +1715,40 @@ class NotionSyncApp(QWidget):
         time_layout.addWidget(export_header)
         time_layout.addWidget(export_content)
 
-        # Action buttons (always visible)
+        # --- Smart Scheduling Suggestions Section ---
+        suggestions_header = self._create_collapsible_header("💡 Smart Suggestions", expanded=False)
+        suggestions_content = QWidget()
+        suggestions_content_layout = QVBoxLayout(suggestions_content)
+        suggestions_content_layout.setContentsMargins(16, 8, 8, 8)
+        suggestions_content.setVisible(False)  # Start collapsed
+        
+        suggestions_desc = QLabel("Get AI-powered suggestions based on your assignments and availability.")
+        suggestions_desc.setStyleSheet("color: #888; font-size: 11px;")
+        suggestions_content_layout.addWidget(suggestions_desc)
+        
+        self.suggestions_output = QTextEdit(readOnly=True)
+        self.suggestions_output.setPlaceholderText("Click 'Analyze' to get scheduling suggestions...")
+        self.suggestions_output.setMaximumHeight(150)
+        suggestions_content_layout.addWidget(self.suggestions_output)
+        
+        analyze_btn_row = QHBoxLayout()
+        self.analyze_btn = QPushButton('🔍 Analyze Schedule')
+        self.analyze_btn.setToolTip("Analyze your assignments and availability to provide smart suggestions")
+        self.analyze_btn.clicked.connect(self._generate_smart_suggestions)
+        analyze_btn_row.addWidget(self.analyze_btn)
+        analyze_btn_row.addStretch()
+        suggestions_content_layout.addLayout(analyze_btn_row)
+        
+        suggestions_header.clicked.connect(lambda: self._toggle_collapsible(suggestions_content, suggestions_header))
+        time_layout.addWidget(suggestions_header)
+        time_layout.addWidget(suggestions_content)
+
+        # Wire up export controls
+        self.export_checkbox.stateChanged.connect(self._update_export_controls)
+        self.export_db_input.textChanged.connect(self._update_export_controls)
+        self.use_main_db_radio.stateChanged.connect(self._update_export_controls)
+
+        # Action buttons (always visible, after all collapsible sections)
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 12, 0, 0)
         self.generate_blocks_btn = QPushButton('Preview Blocks')
@@ -1363,12 +1764,7 @@ class NotionSyncApp(QWidget):
         btn_row.addStretch()
         time_layout.addLayout(btn_row)
 
-        # Wire up export controls
-        self.export_checkbox.stateChanged.connect(self._update_export_controls)
-        self.export_db_input.textChanged.connect(self._update_export_controls)
-        self.use_main_db_radio.stateChanged.connect(self._update_export_controls)
-
-        # Output preview with better styling
+        # Output preview with better styling (last element)
         preview_label = QLabel("Preview:")
         preview_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
         time_layout.addWidget(preview_label)
@@ -1755,6 +2151,65 @@ class NotionSyncApp(QWidget):
         main_layout.addWidget(sidebar, 0)
         main_layout.addWidget(content_area, 1)
 
+        # --- Keyboard Shortcuts (stored as instance vars for remapping) ---
+        # Load saved shortcuts or use defaults
+        self.shortcut_config = self._load_settings_value('shortcuts', {
+            'sync': 'Ctrl+R',
+            'tab1': 'Ctrl+1',
+            'tab2': 'Ctrl+2',
+            'tab3': 'Ctrl+3',
+            'settings': 'Ctrl+,',
+            'test': 'Ctrl+T',
+            'quit': 'Ctrl+Q'
+        })
+        
+        # Store _switch_to function for use in shortcut rebinding
+        self._switch_to_func = _switch_to
+        
+        # Create shortcuts as instance variables so we can rebind them
+        self.shortcuts = {}
+        self._setup_shortcuts()
+
+    def _setup_shortcuts(self):
+        """Set up keyboard shortcuts based on current configuration."""
+        # Clear existing shortcuts
+        for shortcut in self.shortcuts.values():
+            try:
+                shortcut.setEnabled(False)
+                shortcut.deleteLater()
+            except Exception:
+                pass
+        self.shortcuts = {}
+        
+        # Define shortcut actions
+        actions = {
+            'sync': lambda: self._on_sync_clicked(),
+            'tab1': lambda: self._switch_to_func(0),
+            'tab2': lambda: self._switch_to_func(1),
+            'tab3': lambda: self._switch_to_func(2),
+            'settings': lambda: self._open_settings_dialog(),
+            'test': lambda: (self._test_canvas_connection(), self._test_notion_connection()),
+            'quit': lambda: QApplication.quit()
+        }
+        
+        # Create shortcuts from config
+        for key, action in actions.items():
+            key_seq = self.shortcut_config.get(key, '')
+            if key_seq:
+                try:
+                    shortcut = QShortcut(QKeySequence(key_seq), self)
+                    shortcut.activated.connect(action)
+                    self.shortcuts[key] = shortcut
+                except Exception:
+                    pass
+
+    def _apply_shortcuts(self, new_shortcuts):
+        """Apply new shortcut configuration and rebind shortcuts."""
+        self.shortcut_config = new_shortcuts
+        self._save_settings('shortcuts', new_shortcuts)
+        self._setup_shortcuts()
+        self.status_output.append("Keyboard shortcuts updated!")
+
     def _toggle_canvas_url_input(self, checked):
         self.canvas_url_input.setVisible(not checked)
         self._save_settings("use_default_url", checked)
@@ -1762,10 +2217,14 @@ class NotionSyncApp(QWidget):
     def _open_settings_dialog(self):
         """Show SettingsDialog and apply selected values back to the main UI."""
         try:
-            # Pass current buckets and theme into the settings dialog
+            # Pass current buckets, theme, shortcuts, and notifications into the settings dialog
             current_buckets = self._load_settings_value('buckets', [k for k in ['past','undated','upcoming','future','ungraded']])
             current_theme = self._load_settings_value('theme', 'auto')
-            dlg = SettingsDialog(parent=self, startup_checked=self.startup_checkbox.isChecked(), advanced_checked=self.advanced_toggle.isChecked(), current_buckets=current_buckets, current_theme=current_theme)
+            current_shortcuts = self.shortcut_config
+            current_notifications = self._load_settings_value('notifications', {
+                'enabled': True, 'on_success': True, 'on_error': True, 'on_timeblock': True, 'sound': False
+            })
+            dlg = SettingsDialog(parent=self, startup_checked=self.startup_checkbox.isChecked(), advanced_checked=self.advanced_toggle.isChecked(), current_buckets=current_buckets, current_theme=current_theme, current_shortcuts=current_shortcuts, current_notifications=current_notifications)
             result = dlg.exec()
             if result == QDialog.DialogCode.Accepted:
                 # Apply startup setting
@@ -1789,7 +2248,7 @@ class NotionSyncApp(QWidget):
                     self._save_settings('buckets', selected_buckets)
                 except Exception:
                     pass
-                # --- Apply theme setting (NEW) ---
+                # --- Apply theme setting ---
                 try:
                     theme_mode = getattr(dlg, 'theme_mode', 'auto')
                     self._save_settings('theme', theme_mode)
@@ -1799,6 +2258,21 @@ class NotionSyncApp(QWidget):
                         self.status_output.append(f"Could not apply theme: {te}")
                     except Exception:
                         pass
+                # --- Apply keyboard shortcuts ---
+                try:
+                    new_shortcuts = getattr(dlg, 'shortcuts', {})
+                    if new_shortcuts:
+                        self._apply_shortcuts(new_shortcuts)
+                except Exception:
+                    pass
+                # --- Apply notification preferences ---
+                try:
+                    new_notifications = getattr(dlg, 'notifications', {})
+                    if new_notifications:
+                        self._save_settings('notifications', new_notifications)
+                        self.notification_prefs = new_notifications
+                except Exception:
+                    pass
         except Exception as e:
             try:
                 self.status_output.append(f"Could not open settings: {e}")
@@ -1959,6 +2433,76 @@ class NotionSyncApp(QWidget):
         header_btn.setText(new_text)
         header_btn.setProperty("expanded", not is_visible)
 
+    def _test_canvas_connection(self):
+        """Test the Canvas API connection and show result."""
+        canvas_key = self.canvas_input.text().strip() or keyring.get_password(APP_NAME, 'canvas_key')
+        if self.use_default_url_cb.isChecked():
+            base_url = 'https://keyinstitute.instructure.com/api/v1'
+        else:
+            base_url = self.canvas_url_input.text().strip()
+        
+        if not canvas_key:
+            self.status_output.append("❌ Canvas: No API key configured")
+            return
+        
+        try:
+            import requests
+            response = requests.get(f"{base_url}/users/self", headers={"Authorization": f"Bearer {canvas_key}"}, timeout=10)
+            if response.status_code == 200:
+                user_data = response.json()
+                name = user_data.get('name', 'Unknown')
+                self.status_output.append(f"✅ Canvas: Connected as {name}")
+            else:
+                self.status_output.append(f"❌ Canvas: Connection failed (HTTP {response.status_code})")
+        except Exception as e:
+            self.status_output.append(f"❌ Canvas: Connection error - {str(e)[:50]}")
+
+    def _test_notion_connection(self):
+        """Test the Notion API connection and show result."""
+        notion_key = self.notion_key_input.text().strip() or keyring.get_password(APP_NAME, 'notion_key')
+        notion_db_id = self.notion_db_input.text().strip()
+        
+        if not notion_key:
+            self.status_output.append("❌ Notion: No API key configured")
+            return
+        
+        try:
+            import requests
+            # Test user endpoint
+            response = requests.get(
+                "https://api.notion.com/v1/users/me",
+                headers={
+                    "Authorization": f"Bearer {notion_key}",
+                    "Notion-Version": "2022-06-28"
+                },
+                timeout=10
+            )
+            if response.status_code == 200:
+                user_data = response.json()
+                name = user_data.get('name', 'Bot')
+                self.status_output.append(f"✅ Notion: Connected as {name}")
+                
+                # If database ID is provided, test database access
+                if notion_db_id:
+                    db_response = requests.get(
+                        f"https://api.notion.com/v1/databases/{notion_db_id}",
+                        headers={
+                            "Authorization": f"Bearer {notion_key}",
+                            "Notion-Version": "2022-06-28"
+                        },
+                        timeout=10
+                    )
+                    if db_response.status_code == 200:
+                        db_data = db_response.json()
+                        db_title = db_data.get('title', [{}])[0].get('plain_text', 'Unknown')
+                        self.status_output.append(f"✅ Database: {db_title}")
+                    else:
+                        self.status_output.append(f"⚠️ Database: Not accessible (HTTP {db_response.status_code})")
+            else:
+                self.status_output.append(f"❌ Notion: Connection failed (HTTP {response.status_code})")
+        except Exception as e:
+            self.status_output.append(f"❌ Notion: Connection error - {str(e)[:50]}")
+
     def _on_db_choice_changed(self, state):
         """Handle toggle between main database and custom database."""
         use_main = self.use_main_db_radio.isChecked()
@@ -2009,6 +2553,100 @@ class NotionSyncApp(QWidget):
                 end_time = widgets['end'].time().toString("HH:mm")
                 weekly[str(i)] = [{'start': start_time, 'end': end_time}]
         return {'weekly': weekly}
+
+    def _generate_smart_suggestions(self):
+        """Generate smart scheduling suggestions based on assignments and availability."""
+        self.analyze_btn.setEnabled(False)
+        self.analyze_btn.setText("Analyzing...")
+        self.suggestions_output.setPlainText("Analyzing your schedule...")
+        
+        try:
+            from datetime import datetime, timedelta
+            
+            # Get current availability
+            availability = self._get_availability_from_ui()
+            weekly = availability.get('weekly', {})
+            
+            # Analyze availability patterns
+            suggestions = []
+            total_weekly_hours = 0
+            day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            enabled_days = []
+            
+            for i in range(7):
+                if str(i) in weekly:
+                    windows = weekly[str(i)]
+                    for w in windows:
+                        start = datetime.strptime(w['start'], '%H:%M')
+                        end = datetime.strptime(w['end'], '%H:%M')
+                        hours = (end - start).seconds / 3600
+                        total_weekly_hours += hours
+                        enabled_days.append((day_names[i], hours))
+            
+            # Generate suggestions based on analysis
+            suggestions.append("📊 SCHEDULE ANALYSIS\n")
+            suggestions.append(f"Total weekly study hours: {total_weekly_hours:.1f}h")
+            suggestions.append(f"Active days: {len(enabled_days)}/7\n")
+            
+            # Workload distribution suggestions
+            if total_weekly_hours < 10:
+                suggestions.append("⚠️ LOW AVAILABILITY")
+                suggestions.append("Consider adding more study windows to handle assignments effectively.")
+                suggestions.append("Suggested: At least 2-3 hours per day on weekdays.\n")
+            elif total_weekly_hours > 40:
+                suggestions.append("⚠️ HIGH WORKLOAD")
+                suggestions.append("You have a lot of study time scheduled. Make sure to include breaks!")
+                suggestions.append("Consider the Pomodoro technique: 25min work, 5min break.\n")
+            else:
+                suggestions.append("✅ BALANCED SCHEDULE")
+                suggestions.append("Your weekly study hours look reasonable.\n")
+            
+            # Day-specific suggestions
+            if len(enabled_days) < 5:
+                missing_days = [d for d in day_names if d not in [ed[0] for ed in enabled_days]]
+                suggestions.append("💡 COVERAGE SUGGESTION")
+                suggestions.append(f"Consider adding availability on: {', '.join(missing_days[:3])}")
+                suggestions.append("Spreading study across more days improves retention.\n")
+            
+            # Time of day analysis
+            morning_hours = 0
+            evening_hours = 0
+            for i, windows in weekly.items():
+                for w in windows:
+                    start_hour = int(w['start'].split(':')[0])
+                    if start_hour < 12:
+                        morning_hours += 1
+                    elif start_hour >= 17:
+                        evening_hours += 1
+            
+            suggestions.append("⏰ TIME OPTIMIZATION")
+            if morning_hours > evening_hours:
+                suggestions.append("You're a morning studier! Great for complex tasks.")
+                suggestions.append("Schedule difficult assignments in your morning slots.")
+            elif evening_hours > morning_hours:
+                suggestions.append("Evening study sessions work well for review and practice.")
+                suggestions.append("Save creative work for when you're most alert.")
+            else:
+                suggestions.append("You have a balanced mix of study times.")
+            
+            suggestions.append("\n📝 BLOCK SETTINGS")
+            block_min = self.block_minutes_spin.value()
+            if block_min < 45:
+                suggestions.append(f"Your {block_min}min blocks are short. Good for quick tasks.")
+                suggestions.append("Consider 60-90min for deep work sessions.")
+            elif block_min > 120:
+                suggestions.append(f"Your {block_min}min blocks are long. Great for complex projects.")
+                suggestions.append("Remember to take breaks every 45-60 minutes.")
+            else:
+                suggestions.append(f"Your {block_min}min blocks are ideal for focused work.")
+            
+            self.suggestions_output.setPlainText('\n'.join(suggestions))
+            
+        except Exception as e:
+            self.suggestions_output.setPlainText(f"Error analyzing schedule: {str(e)}")
+        finally:
+            self.analyze_btn.setEnabled(True)
+            self.analyze_btn.setText("🔍 Analyze Schedule")
 
     def _on_generate_blocks(self, export=False):
         # Disable buttons while running
@@ -2131,7 +2769,8 @@ class NotionSyncApp(QWidget):
                     'course': b.get('course', ''),
                     'points': b.get('points'),
                     'due_date': b.get('due_date'),
-                    'total_blocks': b.get('total_blocks', 1)
+                    'total_blocks': b.get('total_blocks', 1),
+                    'priority_score': b.get('priority_score', 0)
                 }
             grouped[name]['blocks'].append(b)
         
@@ -2142,6 +2781,7 @@ class NotionSyncApp(QWidget):
             pts = data['points']
             due = data['due_date']
             blks = data['blocks']
+            priority_score = data.get('priority_score', 0)
             
             # Calculate urgency based on first block's scheduled date
             urgency = ""
@@ -2159,11 +2799,18 @@ class NotionSyncApp(QWidget):
             except:
                 pass
             
-            # Header line with name and urgency
-            pts_str = f"{int(pts)}pts" if pts else ""
-            preview_lines.append(f"{urgency} {name[:42]}{'...' if len(name) > 42 else ''}")
+            # Generate priority stars (1-5 stars based on score)
+            priority_stars = ""
+            if priority_score > 0:
+                star_count = min(5, max(1, int(priority_score / 20)))  # Scale to 1-5 stars
+                priority_stars = "⭐" * star_count
             
-            # Info line: course, points, due date
+            # Header line with name, urgency, and priority
+            pts_str = f"{int(pts)}pts" if pts else ""
+            name_display = f"{name[:38]}{'...' if len(name) > 38 else ''}"
+            preview_lines.append(f"{urgency} {name_display} {priority_stars}")
+            
+            # Info line: course, points, due date, priority score
             info_parts = []
             if course:
                 info_parts.append(course[:20])
@@ -2171,6 +2818,8 @@ class NotionSyncApp(QWidget):
                 info_parts.append(pts_str)
             if due:
                 info_parts.append(f"Due: {due}")
+            if priority_score > 0:
+                info_parts.append(f"Priority: {int(priority_score)}")
             preview_lines.append(f"   {' | '.join(info_parts)}")
             
             # Show scheduled times compactly (sorted chronologically)
