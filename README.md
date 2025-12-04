@@ -2,7 +2,41 @@
 
 A desktop helper app to sync Canvas assignments to a Notion database, with a simple scheduler and a time-block generator. This branch (beta-0.1) includes a refreshed UI/UX, safer credential storage, and several stability fixes.
 
-## What’s in this branch
+## What's New (Latest)
+
+### 🔔 Notification System
+- Configurable notification preferences (enable/disable per category)
+- Notifications for: successful sync, sync errors, time block generation
+- Optional sound alerts with **cross-platform support** (macOS, Windows, Linux)
+
+### 💡 Smart Scheduling Suggestions
+- AI-powered schedule analysis based on your availability
+- Workload assessment (low/balanced/high)
+- Time optimization tips (morning vs evening study patterns)
+- Block duration recommendations
+
+### ⌨️ Keyboard Shortcuts
+- Customizable shortcuts for common actions
+- Default shortcuts: `Ctrl+R` (sync), `Ctrl+1/2/3` (tabs), `Ctrl+,` (settings), `Ctrl+T` (test), `Ctrl+Q` (quit)
+- Remap any shortcut via Settings dialog
+
+### 🔌 Connection Testing
+- Test Canvas API connection with one click
+- Test Notion API connection and database access
+- Visual feedback in status area (✅/❌)
+
+### ⚙️ Enhanced Time Blocker
+- **Priority Scoring System**: Configurable weights for points, urgency, exam bonus
+- **Collapsible UI sections**: Block Settings, Weekly Availability, Notion Export, Smart Suggestions
+- **Improved preview**: Shows priority stars (⭐), chronological block order, urgency indicators
+- **Database choice**: Use main database or specify custom database for time blocks
+
+### 🎨 Settings Dialog Overhaul
+- Collapsible sections for cleaner organization
+- Sections: General, Sync Scope, Notifications, Keyboard Shortcuts, Advanced
+- Scrollable content area
+
+## What's in this branch
 - Sidebar UX polish: smooth collapse/expand animation, text fade, width memory, consistent icon/text styling (font-size 11px, light text color).
 - Safer paths: credentials/logs stored under OS-specific app support (macOS: `~/Library/Application Support/NotionSync/`).
 - Key storage: Canvas/Notion API keys saved to the OS keychain via `keyring`.
