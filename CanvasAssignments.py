@@ -455,13 +455,14 @@ class SettingsDialog(QDialog):
     toggle-list instead of the sync blocks button. Values are exposed as
     attributes after the dialog is accepted.
     """
-    def __init__(self, parent=None, startup_checked=False, advanced_checked=False, current_buckets=None, current_theme='auto', current_shortcuts=None, current_notifications=None):
+    def __init__(self, parent=None, startup_checked=False, advanced_checked=False, current_buckets=None, current_theme='auto', current_shortcuts=None, current_notifications=None, current_sync_time='23:59'):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setModal(True)
         self.resize(520, 600)
 
         self.selected_buckets = current_buckets or []
+        self.current_sync_time = current_sync_time
         
         # Load notification preferences
         self.current_notifications = current_notifications if current_notifications else {
@@ -507,6 +508,39 @@ class SettingsDialog(QDialog):
         general_header.clicked.connect(lambda: self._toggle_settings_section(general_content, general_header))
         layout.addWidget(general_header)
         layout.addWidget(general_content)
+
+        # --- Scheduler (collapsible) ---
+        sched_header = self._create_settings_header("⏰ Scheduler", expanded=False)
+        sched_content = QWidget()
+        sched_content.setVisible(False)
+        sched_layout = QVBoxLayout(sched_content)
+        sched_layout.setContentsMargins(16, 8, 8, 8)
+        sched_layout.setSpacing(6)
+        
+        sched_desc = QLabel('Set the time for automatic daily sync when running in daemon mode.')
+        sched_desc.setWordWrap(True)
+        sched_desc.setStyleSheet('color: gray; font-size: 11px;')
+        sched_layout.addWidget(sched_desc)
+        
+        time_row = QHBoxLayout()
+        time_row.addWidget(QLabel('Daily sync time:'))
+        from PyQt6.QtWidgets import QTimeEdit
+        self.sync_time_edit = QTimeEdit()
+        self.sync_time_edit.setDisplayFormat('HH:mm')
+        try:
+            h, m = map(int, self.current_sync_time.split(':'))
+            from PyQt6.QtCore import QTime
+            self.sync_time_edit.setTime(QTime(h, m))
+        except Exception:
+            pass
+        self.sync_time_edit.setToolTip('Time in 24-hour format for daily background sync')
+        time_row.addWidget(self.sync_time_edit)
+        time_row.addStretch()
+        sched_layout.addLayout(time_row)
+        
+        sched_header.clicked.connect(lambda: self._toggle_settings_section(sched_content, sched_header))
+        layout.addWidget(sched_header)
+        layout.addWidget(sched_content)
 
         # --- Sync Scope (collapsible) ---
         scope_header = self._create_settings_header("📋 " + T['sync_scope_label'], expanded=False)
@@ -796,6 +830,11 @@ class SettingsDialog(QDialog):
             }
         except Exception:
             self.notifications = {'enabled': True, 'on_success': True, 'on_error': True, 'on_timeblock': True, 'sound': False}
+        # --- Sync time ---
+        try:
+            self.sync_time = self.sync_time_edit.time().toString('HH:mm')
+        except Exception:
+            self.sync_time = '23:59'
         self.accept()
 
 
@@ -1824,19 +1863,19 @@ class NotionSyncApp(QWidget):
             sync_icon_path = resource_path('sync.png')
             if os.path.exists(sync_icon_path):
                 btn_assign.setIcon(QIcon(sync_icon_path))
-                btn_assign.setIconSize(QSize(18, 18))
+                btn_assign.setIconSize(QSize(20, 20))  # Match collapse button icon size
             time_icon_path = resource_path('book_ribbon.png')
             if os.path.exists(time_icon_path):
                 btn_time.setIcon(QIcon(time_icon_path))
-                btn_time.setIconSize(QSize(18, 18))
+                btn_time.setIconSize(QSize(20, 20))  # Match collapse button icon size
         except Exception:
             pass
 
         for b in (btn_assign, btn_time):
             b.setCheckable(True)
-            b.setMinimumHeight(36)
-            b.setFixedHeight(36)  # Keep height consistent during collapse/expand
-            # Reduce font size and use theme-aware text color.
+            b.setFixedHeight(36)  # Match sidebar icon height
+            b.setMinimumWidth(36)  # Minimum width matches icon size when collapsed
+            # Use consistent icon size with collapse button
             text_color = get_nav_text_color(255)
             b.setStyleSheet(f'text-align: left; padding-left: 8px; font-size: 11px; color: {text_color};')
             nav_layout.addWidget(b)
@@ -1957,11 +1996,11 @@ class NotionSyncApp(QWidget):
                             nb.setText('')
                             nb.setStyleSheet(style_centered)
                             nb.setToolTip(getattr(nb, '_full_text', ''))
-                            # Keep fixed height, let width adjust to collapsed container
+                            # Keep fixed height, set width to match sidebar icon
                             nb.setFixedHeight(36)
-                            nb.setMinimumWidth(0)
-                            nb.setMaximumWidth(16777215)
-                            nb.setIconSize(QSize(24, 24))
+                            nb.setMinimumWidth(36)
+                            nb.setMaximumWidth(36)
+                            nb.setIconSize(QSize(20, 20))  # Match collapse button icon size
                         except Exception:
                             pass
                     try:
@@ -1972,9 +2011,9 @@ class NotionSyncApp(QWidget):
                             sb.setText('')
                             sb.setStyleSheet(style_centered)
                             sb.setFixedHeight(36)
-                            sb.setMinimumWidth(0)
-                            sb.setMaximumWidth(16777215)
-                            sb.setIconSize(QSize(24, 24))
+                            sb.setMinimumWidth(36)
+                            sb.setMaximumWidth(36)
+                            sb.setIconSize(QSize(20, 20))  # Match collapse button icon size
                     except Exception:
                         pass
                 seq_group.finished.connect(_on_collapse_finished)
@@ -1990,9 +2029,9 @@ class NotionSyncApp(QWidget):
                             nb.setStyleSheet(style_transparent)
                             # Keep fixed height, flexible width
                             nb.setFixedHeight(36)
-                            nb.setMinimumWidth(0)
+                            nb.setMinimumWidth(36)
                             nb.setMaximumWidth(16777215)
-                            nb.setIconSize(QSize(18, 18))
+                            nb.setIconSize(QSize(20, 20))  # Match collapse button icon size
                             if not hasattr(nb, '_fader'):
                                 nb._fader = LabelOpacityHelper(nb)
                             nb._fader._opacity = 0.0
@@ -2005,9 +2044,9 @@ class NotionSyncApp(QWidget):
                             sb.setText(full)
                             sb.setStyleSheet(style_transparent)
                             sb.setFixedHeight(36)
-                            sb.setMinimumWidth(0)
+                            sb.setMinimumWidth(36)
                             sb.setMaximumWidth(16777215)
-                            sb.setIconSize(QSize(18, 18))
+                            sb.setIconSize(QSize(20, 20))  # Match collapse button icon size
                             if not hasattr(sb, '_fader'):
                                 sb._fader = LabelOpacityHelper(sb)
                             sb._fader._opacity = 0.0
@@ -2208,7 +2247,8 @@ class NotionSyncApp(QWidget):
             current_notifications = self._load_settings_value('notifications', {
                 'enabled': True, 'on_success': True, 'on_error': True, 'on_timeblock': True, 'sound': False
             })
-            dlg = SettingsDialog(parent=self, startup_checked=self.startup_checkbox.isChecked(), advanced_checked=self.advanced_toggle.isChecked(), current_buckets=current_buckets, current_theme=current_theme, current_shortcuts=current_shortcuts, current_notifications=current_notifications)
+            current_sync_time = self._load_settings_value('sync_time', '23:59')
+            dlg = SettingsDialog(parent=self, startup_checked=self.startup_checkbox.isChecked(), advanced_checked=self.advanced_toggle.isChecked(), current_buckets=current_buckets, current_theme=current_theme, current_shortcuts=current_shortcuts, current_notifications=current_notifications, current_sync_time=current_sync_time)
             result = dlg.exec()
             if result == QDialog.DialogCode.Accepted:
                 # Apply startup setting
@@ -2255,6 +2295,14 @@ class NotionSyncApp(QWidget):
                     if new_notifications:
                         self._save_settings('notifications', new_notifications)
                         self.notification_prefs = new_notifications
+                except Exception:
+                    pass
+                # --- Apply sync time ---
+                try:
+                    new_sync_time = getattr(dlg, 'sync_time', None)
+                    if new_sync_time:
+                        self._save_settings('sync_time', new_sync_time)
+                        self.time_edit.setTime(QTime.fromString(new_sync_time, 'HH:mm'))
                 except Exception:
                     pass
         except Exception as e:
@@ -2835,7 +2883,23 @@ class NotionSyncApp(QWidget):
         self.status_output.append(message)
 
 # --- Platform-specific and background functions (Unchanged) ---
-def get_startup_script_path(): return f'"{sys.executable}" --daemon'
+def get_app_executable():
+    """Get the correct executable path for the app (works for both script and compiled)."""
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable (PyInstaller)
+        return sys.executable
+    else:
+        # Running as script - return python + script path
+        return f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+
+def get_startup_script_path(): 
+    if getattr(sys, 'frozen', False):
+        # Compiled app - just the executable with --daemon flag
+        return f'"{sys.executable}" --daemon'
+    else:
+        # Script mode - python + script + --daemon
+        return f'"{sys.executable}" "{os.path.abspath(__file__)}" --daemon'
+
 def set_startup(enable: bool):
     if sys.platform == "win32":
         import winreg
@@ -2852,7 +2916,13 @@ def set_startup(enable: bool):
     elif sys.platform == "darwin":
         plist_path = os.path.expanduser(f"~/Library/LaunchAgents/com.{APP_NAME.lower()}.plist")
         if enable:
-            plist_content = f"""<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>com.{APP_NAME.lower()}</string><key>ProgramArguments</key><array><string>{sys.executable}</string><string>--daemon</string></array><key>RunAtLoad</key><true/></dict></plist>"""
+            if getattr(sys, 'frozen', False):
+                # Compiled app
+                plist_content = f"""<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>com.{APP_NAME.lower()}</string><key>ProgramArguments</key><array><string>{sys.executable}</string><string>--daemon</string></array><key>RunAtLoad</key><true/></dict></plist>"""
+            else:
+                # Script mode
+                script_path = os.path.abspath(__file__)
+                plist_content = f"""<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>com.{APP_NAME.lower()}</string><key>ProgramArguments</key><array><string>{sys.executable}</string><string>{script_path}</string><string>--daemon</string></array><key>RunAtLoad</key><true/></dict></plist>"""
             with open(plist_path, "w") as f: f.write(plist_content)
         else:
             if os.path.exists(plist_path): os.remove(plist_path)
