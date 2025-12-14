@@ -1069,6 +1069,9 @@ class NotionSyncApp(QWidget):
         self.notification_prefs = {
             'enabled': True, 'on_success': True, 'on_error': True, 'on_timeblock': True, 'sound': False
         }
+        self._timeblock_thread_active = False
+        self._blocks_ready = False
+        self._last_auto_preview_step = None
         self._setup_ui()
         self._load_settings()
 
@@ -1556,8 +1559,34 @@ class NotionSyncApp(QWidget):
         desc_label.setStyleSheet("color: #888; font-size: 12px; margin-bottom: 8px;")
         time_layout.addWidget(desc_label)
 
+        # Step indicator guides users through the flow: settings → availability → export/preview
+        step_indicator = QHBoxLayout()
+        self.time_step_labels = []
+        self._time_step_titles = ["Block Settings", "Weekly Availability", "Notion Export"]
+        for i, title in enumerate(self._time_step_titles):
+            lbl = QLabel(f"{i+1}. {title}")
+            lbl.setStyleSheet("padding: 6px 10px; border-radius: 8px; background-color: rgba(255,255,255,0.06);")
+            self.time_step_labels.append(lbl)
+            step_indicator.addWidget(lbl)
+            if i < len(self._time_step_titles) - 1:
+                arrow = QLabel("→")
+                arrow.setStyleSheet("color: #888; padding: 0 6px;")
+                step_indicator.addWidget(arrow)
+        step_indicator.addStretch()
+        time_layout.addLayout(step_indicator)
+
         # Import needed widgets
         from PyQt6.QtWidgets import QSpinBox, QScrollArea, QFrame, QDoubleSpinBox, QGridLayout
+
+        # Helper to wrap a header and its content so we can toggle the entire step at once
+        def _wrap_step_section(header_btn: QPushButton, content_widget: QWidget) -> QWidget:
+            container = QWidget()
+            container_layout = QVBoxLayout(container)
+            container_layout.setContentsMargins(0, 0, 0, 0)
+            container_layout.setSpacing(4)
+            container_layout.addWidget(header_btn)
+            container_layout.addWidget(content_widget)
+            return container
 
         # --- Collapsible Block Settings ---
         settings_header = self._create_collapsible_header("⚙️ Block Settings", expanded=True)
@@ -1638,19 +1667,32 @@ class NotionSyncApp(QWidget):
         settings_content_layout.addLayout(scoring_grid)
 
         settings_header.clicked.connect(lambda: self._toggle_collapsible(settings_content, settings_header))
-        time_layout.addWidget(settings_header)
-        time_layout.addWidget(settings_content)
+        settings_container = _wrap_step_section(settings_header, settings_content)
 
         # --- Collapsible Weekly Availability ---
         avail_header = self._create_collapsible_header("📅 Weekly Availability", expanded=False)
+        # Wrap availability editor in a scroll area so it doesn't blow up the layout
+        avail_scroll = QScrollArea()
+        avail_scroll.setWidgetResizable(True)
+        avail_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        avail_scroll.setVisible(False)  # Start collapsed
         avail_content = QWidget()
-        avail_content_layout = QVBoxLayout(avail_content)
+        avail_scroll.setWidget(avail_content)
+        avail_content_layout = QHBoxLayout(avail_content)
         avail_content_layout.setContentsMargins(16, 8, 8, 8)
-        avail_content.setVisible(False)  # Start collapsed
+        avail_content_layout.setSpacing(12)
+        avail_scroll.setFixedHeight(240)
+
+        # Split availability into two columns: left = weekdays, right = presets
+        avail_left_col = QVBoxLayout()
+        avail_left_col.setSpacing(6)
+        avail_right_col = QVBoxLayout()
+        avail_right_col.setSpacing(6)
+        avail_right_col.setContentsMargins(12, 0, 0, 0)
         
         avail_desc = QLabel("Set your available study windows for each day of the week.")
         avail_desc.setStyleSheet("color: #888; font-size: 11px;")
-        avail_content_layout.addWidget(avail_desc)
+        avail_left_col.addWidget(avail_desc)
         
         # Store availability widgets
         self.availability_widgets = {}
@@ -1682,29 +1724,37 @@ class NotionSyncApp(QWidget):
             day_row.addStretch()
             
             self.availability_widgets[i] = {'start': start_edit, 'end': end_edit, 'enabled': enabled_cb}
-            avail_content_layout.addLayout(day_row)
+            avail_left_col.addLayout(day_row)
         
-        # Quick presets row
-        preset_row = QHBoxLayout()
-        preset_row.addWidget(QLabel("Presets:"))
+        avail_left_col.addStretch()
+
+        # Quick presets stacked on the right to save vertical space
+        preset_title = QLabel("Presets")
+        preset_title.setStyleSheet("font-weight: 600; margin-bottom: 2px;")
+        avail_right_col.addWidget(preset_title)
+
         evenings_btn = QPushButton("Evenings")
         evenings_btn.setToolTip("6-9 PM all days")
         evenings_btn.clicked.connect(lambda: self._apply_availability_preset('evenings'))
-        preset_row.addWidget(evenings_btn)
+        avail_right_col.addWidget(evenings_btn)
+
         weekends_btn = QPushButton("Weekends")
         weekends_btn.setToolTip("Saturday & Sunday only")
         weekends_btn.clicked.connect(lambda: self._apply_availability_preset('weekends'))
-        preset_row.addWidget(weekends_btn)
+        avail_right_col.addWidget(weekends_btn)
+
         allday_btn = QPushButton("9-5")
         allday_btn.setToolTip("9 AM - 5 PM all days")
         allday_btn.clicked.connect(lambda: self._apply_availability_preset('allday'))
-        preset_row.addWidget(allday_btn)
-        preset_row.addStretch()
-        avail_content_layout.addLayout(preset_row)
+        avail_right_col.addWidget(allday_btn)
 
-        avail_header.clicked.connect(lambda: self._toggle_collapsible(avail_content, avail_header))
-        time_layout.addWidget(avail_header)
-        time_layout.addWidget(avail_content)
+        avail_right_col.addStretch()
+
+        avail_content_layout.addLayout(avail_left_col, 1)
+        avail_content_layout.addLayout(avail_right_col, 0)
+
+        avail_header.clicked.connect(lambda: self._toggle_collapsible(avail_scroll, avail_header))
+        avail_container = _wrap_step_section(avail_header, avail_scroll)
 
         # --- Collapsible Notion Export ---
         export_header = self._create_collapsible_header("📤 Notion Export (Optional)", expanded=False)
@@ -1712,13 +1762,6 @@ class NotionSyncApp(QWidget):
         export_content_layout = QVBoxLayout(export_content)
         export_content_layout.setContentsMargins(16, 8, 8, 8)
         export_content.setVisible(False)  # Start collapsed
-        
-        export_row1 = QHBoxLayout()
-        self.export_checkbox = QCheckBox('Export blocks to Notion')
-        self.export_checkbox.setToolTip("When enabled, generated blocks will be added to your Notion database")
-        export_row1.addWidget(self.export_checkbox)
-        export_row1.addStretch()
-        export_content_layout.addLayout(export_row1)
         
         # Database selection - option to use main DB or custom
         db_choice_row = QHBoxLayout()
@@ -1741,9 +1784,58 @@ class NotionSyncApp(QWidget):
         # Wire up database choice toggle
         self.use_main_db_radio.stateChanged.connect(self._on_db_choice_changed)
 
+        # Action buttons live inside the export section now
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 8, 0, 0)
+        self.generate_blocks_btn = QPushButton('Preview Blocks')
+        self.generate_blocks_btn.setToolTip("Generate time blocks without exporting (dry run)")
+        self.generate_blocks_btn.clicked.connect(self._on_generate_blocks)
+        btn_row.addWidget(self.generate_blocks_btn)
+        
+        self.export_confirm_btn = QPushButton('Generate & Export to Notion')
+        self.export_confirm_btn.setToolTip("Generate blocks and export them to Notion")
+        self.export_confirm_btn.clicked.connect(lambda: self._on_generate_blocks(export=True))
+        self.export_confirm_btn.setEnabled(False)
+        btn_row.addWidget(self.export_confirm_btn)
+        btn_row.addStretch()
+        export_content_layout.addLayout(btn_row)
+
+        # Preview output now lives inside the export section
+        preview_label = QLabel("Preview:")
+        preview_label.setStyleSheet("font-weight: bold; margin-top: 6px;")
+        export_content_layout.addWidget(preview_label)
+        
+        self.blocks_preview = QTextEdit(readOnly=True)
+        self.blocks_preview.setPlaceholderText("Generated time blocks will appear here...")
+        self.blocks_preview.setMinimumHeight(140)
+        export_content_layout.addWidget(self.blocks_preview)
+
         export_header.clicked.connect(lambda: self._toggle_collapsible(export_content, export_header))
-        time_layout.addWidget(export_header)
-        time_layout.addWidget(export_content)
+        export_container = _wrap_step_section(export_header, export_content)
+
+        # Add wrapped step containers so we can control visibility per step
+        self._time_step_containers = [settings_container, avail_container, export_container]
+        self._timeblock_steps_meta = [
+            {'header': settings_header, 'content': settings_content},
+            {'header': avail_header, 'content': avail_scroll},
+            {'header': export_header, 'content': export_content},
+        ]
+        for c in self._time_step_containers:
+            time_layout.addWidget(c)
+
+        # Step navigation buttons (Back/Next) to move through the guided flow
+        step_nav = QHBoxLayout()
+        self.time_step_back_btn = QPushButton('Back')
+        self.time_step_back_btn.setToolTip("Go to the previous step")
+        self.time_step_back_btn.clicked.connect(lambda: self._advance_time_step(-1))
+        step_nav.addWidget(self.time_step_back_btn)
+
+        self.time_step_next_btn = QPushButton('Next')
+        self.time_step_next_btn.setToolTip("Continue to the next step")
+        self.time_step_next_btn.clicked.connect(lambda: self._advance_time_step(1))
+        step_nav.addWidget(self.time_step_next_btn)
+        step_nav.addStretch()
+        time_layout.addLayout(step_nav)
 
         # --- Smart Scheduling Suggestions Section ---
         suggestions_header = self._create_collapsible_header("💡 Smart Suggestions", expanded=False)
@@ -1774,40 +1866,17 @@ class NotionSyncApp(QWidget):
         time_layout.addWidget(suggestions_content)
 
         # Wire up export controls
-        self.export_checkbox.stateChanged.connect(self._update_export_controls)
         self.export_db_input.textChanged.connect(self._update_export_controls)
         self.use_main_db_radio.stateChanged.connect(self._update_export_controls)
 
-        # Action buttons (always visible, after all collapsible sections)
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 12, 0, 0)
-        self.generate_blocks_btn = QPushButton('Preview Blocks')
-        self.generate_blocks_btn.setToolTip("Generate time blocks without exporting (dry run)")
-        self.generate_blocks_btn.clicked.connect(self._on_generate_blocks)
-        btn_row.addWidget(self.generate_blocks_btn)
-        
-        self.export_confirm_btn = QPushButton('Generate & Export to Notion')
-        self.export_confirm_btn.setToolTip("Generate blocks and export them to Notion")
-        self.export_confirm_btn.clicked.connect(lambda: self._on_generate_blocks(export=True))
-        self.export_confirm_btn.setEnabled(False)
-        btn_row.addWidget(self.export_confirm_btn)
-        btn_row.addStretch()
-        time_layout.addLayout(btn_row)
-
-        # Output preview with better styling (last element)
-        preview_label = QLabel("Preview:")
-        preview_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
-        time_layout.addWidget(preview_label)
-        
-        self.blocks_preview = QTextEdit(readOnly=True)
-        self.blocks_preview.setPlaceholderText("Generated time blocks will appear here...")
-        self.blocks_preview.setMinimumHeight(120)
-        time_layout.addWidget(self.blocks_preview)
-        
         # Add stretch at the end to push everything up
         time_layout.addStretch()
 
         self.page_stack.addWidget(time_tab)         # index 2
+
+        # Initialize guided stepper after widgets exist
+        self._current_time_step = 0
+        self._update_time_stepper()
 
         # Build a sidebar to hold navigation buttons and a bottom settings area
         sidebar = QWidget()
@@ -2465,6 +2534,96 @@ class NotionSyncApp(QWidget):
         header_btn.setText(new_text)
         header_btn.setProperty("expanded", not is_visible)
 
+    def _set_collapsible_state(self, content_widget: QWidget, header_btn: QPushButton, expanded: bool):
+        """Force a collapsible section to a specific expanded/collapsed state."""
+        content_widget.setVisible(expanded)
+        current_text = header_btn.text()
+        # Strip any leading arrow so we can rebuild it consistently
+        if current_text.startswith("▼ ") or current_text.startswith("▶ "):
+            base_title = current_text[2:]
+        else:
+            base_title = current_text
+        arrow = "▼" if expanded else "▶"
+        header_btn.setText(f"{arrow} {base_title}")
+        header_btn.setProperty("expanded", expanded)
+
+    def _advance_time_step(self, delta: int):
+        """Move the guided flow forward/backward and refresh UI."""
+        if not hasattr(self, '_time_step_containers'):
+            return
+        total = len(self._time_step_containers)
+        next_step = max(0, min(total - 1, self._current_time_step + delta))
+        if next_step == self._current_time_step:
+            return
+        self._last_auto_preview_step = None
+        self._current_time_step = next_step
+        self._update_time_stepper()
+
+    def _update_time_stepper(self):
+        """Show only the active step, update labels, and trigger auto-preview on the last step."""
+        try:
+            total = len(self._time_step_containers)
+        except Exception:
+            return
+
+        for idx, container in enumerate(self._time_step_containers):
+            is_active = idx == self._current_time_step
+            container.setVisible(is_active)
+            # Keep the current step expanded for clarity
+            if hasattr(self, '_timeblock_steps_meta') and idx < len(self._timeblock_steps_meta):
+                meta = self._timeblock_steps_meta[idx]
+                self._set_collapsible_state(meta['content'], meta['header'], True if is_active else meta['content'].isVisible())
+
+            if hasattr(self, 'time_step_labels') and idx < len(self.time_step_labels):
+                style = "padding: 6px 10px; border-radius: 8px;"
+                if is_active:
+                    style += " background-color: #0a84ff; color: white; font-weight: 700;"
+                elif idx < self._current_time_step:
+                    style += " background-color: rgba(10,132,255,0.12); color: #e8eef6;"
+                else:
+                    style += " background-color: rgba(255,255,255,0.06); color: #888;"
+                self.time_step_labels[idx].setStyleSheet(style)
+
+        # Update navigation buttons
+        if hasattr(self, 'time_step_back_btn'):
+            self.time_step_back_btn.setEnabled(self._current_time_step > 0)
+        if hasattr(self, 'time_step_next_btn'):
+            if self._current_time_step < total - 1:
+                next_title = self._time_step_titles[self._current_time_step + 1]
+                self.time_step_next_btn.setText(f"Next: {next_title}")
+                self.time_step_next_btn.setEnabled(True)
+            else:
+                self.time_step_next_btn.setText("Preview Blocks")
+                self.time_step_next_btn.setEnabled(True)
+
+        # Auto-preview once the user reaches the Notion Export step
+        if self._current_time_step == total - 1:
+            self._auto_preview_blocks_if_possible()
+
+        # Ensure smart suggestions remain visible regardless of step
+        try:
+            self.suggestions_output.setVisible(True)
+        except Exception:
+            pass
+
+    def _auto_preview_blocks_if_possible(self):
+        """Kick off a dry-run preview when reaching the final step, avoiding duplicate runs."""
+        try:
+            if getattr(self, '_timeblock_thread_active', False):
+                return
+            # If a thread object exists and is running, skip
+            if hasattr(self, 'timeblock_thread') and getattr(self.timeblock_thread, 'isRunning', lambda: False)():
+                return
+            if getattr(self, '_last_auto_preview_step', None) == getattr(self, '_current_time_step', None):
+                return
+            # Only trigger if the preview widget exists
+            if hasattr(self, 'blocks_preview'):
+                self.blocks_preview.setPlainText("Auto-previewing your time blocks based on the selected settings...")
+            self._last_auto_preview_step = getattr(self, '_current_time_step', None)
+            self._on_generate_blocks(export=False, auto=True)
+        except Exception:
+            pass
+
     def _test_canvas_connection(self):
         """Test the Canvas API connection and show result."""
         canvas_key = self.canvas_input.text().strip() or keyring.get_password(APP_NAME, 'canvas_key')
@@ -2680,10 +2839,17 @@ class NotionSyncApp(QWidget):
             self.analyze_btn.setEnabled(True)
             self.analyze_btn.setText("🔍 Analyze Schedule")
 
-    def _on_generate_blocks(self, export=False):
-        # Disable buttons while running
-        self.generate_blocks_btn.setEnabled(False)
-        self.export_confirm_btn.setEnabled(False)
+    def _on_generate_blocks(self, export=False, auto=False):
+        # Avoid parallel runs
+        if getattr(self, '_timeblock_thread_active', False):
+            if not auto:
+                self.status_output.append('A time block run is already in progress...')
+            return
+
+        # Disable buttons while running for manual triggers only
+        if not auto:
+            self.generate_blocks_btn.setEnabled(False)
+            self.export_confirm_btn.setEnabled(False)
 
         canvas_key = self.canvas_input.text().strip() or keyring.get_password(APP_NAME, 'canvas_key')
         if self.use_default_url_cb.isChecked():
@@ -2694,8 +2860,9 @@ class NotionSyncApp(QWidget):
         # Check for required Canvas key
         if not canvas_key:
             self.status_output.append('Error: Please enter your Canvas API key first.')
-            self.generate_blocks_btn.setEnabled(True)
-            self._update_export_controls()
+            if not auto:
+                self.generate_blocks_btn.setEnabled(True)
+                self._update_export_controls()
             return
 
         buckets = [k for k, cb in self.bucket_checkboxes.items() if cb.isChecked()]
@@ -2715,46 +2882,42 @@ class NotionSyncApp(QWidget):
         notion_key = self.notion_key_input.text().strip() or keyring.get_password(APP_NAME, 'notion_key')
         notion_db_id = self._get_export_db_id()
 
-        # If this invocation requested export, ensure the user explicitly checked
-        # the export checkbox and provided a database id.
+        # If this invocation requested export, ensure a database id is set and Notion key exists.
         if export:
-            if not self.export_checkbox.isChecked():
-                self.status_output.append('Export not enabled. Please check "Export blocks to Notion".')
-                self.generate_blocks_btn.setEnabled(True)
-                self._update_export_controls()
-                return
             if not notion_db_id:
                 db_hint = "main database in Credentials" if self.use_main_db_radio.isChecked() else "custom database ID"
                 self.status_output.append(f'No Notion database configured. Please set up your {db_hint}.')
-                self.generate_blocks_btn.setEnabled(True)
-                self._update_export_controls()
+                if not auto:
+                    self.generate_blocks_btn.setEnabled(True)
+                    self._update_export_controls()
                 return
             if not notion_key:
                 self.status_output.append('Error: Please enter your Notion API key first.')
-                self.generate_blocks_btn.setEnabled(True)
-                self._update_export_controls()
+                if not auto:
+                    self.generate_blocks_btn.setEnabled(True)
+                    self._update_export_controls()
                 return
 
-        self.status_output.append('Generating time blocks...')
+        self.status_output.append('Auto-previewing time blocks...' if auto else 'Generating time blocks...')
+        self._blocks_ready = False
         
         # Start background worker
+        self._timeblock_thread_active = True
         self.timeblock_thread = TimeBlockThread(canvas_key, base_url, buckets, selected_course_ids, block_minutes, daily_max, availability, notion_key, notion_db_id, export)
         self.timeblock_thread.finished.connect(self._on_timeblock_finished)
         self.timeblock_thread.start()
 
     def _update_export_controls(self):
-        """Enable the Generate & Export button only when the user opted in and has a valid DB."""
+        """Enable Export when a DB is set and a preview has completed."""
         try:
             enabled = False
-            if getattr(self, 'export_checkbox', None) and self.export_checkbox.isChecked():
-                # Check if using main DB or custom DB
-                if getattr(self, 'use_main_db_radio', None) and self.use_main_db_radio.isChecked():
-                    # Using main database - check if main DB is configured
-                    main_db = self.notion_db_input.text().strip() if hasattr(self, 'notion_db_input') else ''
-                    enabled = bool(main_db)
-                else:
-                    # Using custom database - check if custom DB is entered
-                    enabled = bool(self.export_db_input.text().strip())
+            db_id = ''
+            if getattr(self, 'use_main_db_radio', None) and self.use_main_db_radio.isChecked():
+                db_id = self.notion_db_input.text().strip() if hasattr(self, 'notion_db_input') else ''
+            else:
+                db_id = self.export_db_input.text().strip()
+            if db_id and getattr(self, '_blocks_ready', False):
+                enabled = True
             self.export_confirm_btn.setEnabled(enabled)
         except Exception:
             pass
@@ -2772,6 +2935,8 @@ class NotionSyncApp(QWidget):
             return self.export_db_input.text().strip()
 
     def _on_timeblock_finished(self, blocks, message):
+        self._timeblock_thread_active = False
+        self._blocks_ready = blocks is not None
         # Re-enable buttons
         try:
             self.generate_blocks_btn.setEnabled(True)
