@@ -355,6 +355,19 @@ def get_current_theme_mode():
     return saved_theme
 
 
+# --- Navigation sizing constants (keep sidebar + nav controls consistent) ---
+NAV_BTN_HEIGHT_PX = 24
+NAV_ICON_PX = 14
+NAV_FONT_PX = 9
+NAV_TEXT_PAD_LEFT_PX = 6
+NAV_BTN_PAD_Y_PX = 3
+NAV_BTN_PAD_X_PX = 10
+NAV_BTN_RADIUS_PX = 6
+NAV_SIDEBAR_COLLAPSED_WIDTH_PX = 52
+NAV_SIDEBAR_EXPANDED_MIN_WIDTH_PX = 110
+NAV_SIDEBAR_EXPANDED_MAX_WIDTH_PX = 185
+
+
 def get_nav_text_color(alpha=255):
     """Get appropriate nav button text color based on current theme."""
     theme = get_current_theme_mode()
@@ -864,7 +877,10 @@ class LabelOpacityHelper(QObject):
         try:
             # Preserve custom font-size for nav buttons so it doesn't reset after fade animations.
             text_color = get_nav_text_color(alpha)
-            self._button.setStyleSheet(f"text-align: left; padding-left: 8px; font-size: 11px; color: {text_color};")
+            self._button.setStyleSheet(
+                f"text-align: left; padding: {NAV_BTN_PAD_Y_PX}px {NAV_BTN_PAD_X_PX}px; padding-left: {NAV_TEXT_PAD_LEFT_PX}px; "
+                f"font-size: {NAV_FONT_PX}px; border-radius: {NAV_BTN_RADIUS_PX}px; color: {text_color};"
+            )
         except Exception:
             pass
 
@@ -1827,11 +1843,13 @@ class NotionSyncApp(QWidget):
         step_nav = QHBoxLayout()
         self.time_step_back_btn = QPushButton('Back')
         self.time_step_back_btn.setToolTip("Go to the previous step")
+        self.time_step_back_btn.setMinimumHeight(NAV_BTN_HEIGHT_PX)
         self.time_step_back_btn.clicked.connect(lambda: self._advance_time_step(-1))
         step_nav.addWidget(self.time_step_back_btn)
 
         self.time_step_next_btn = QPushButton('Next')
         self.time_step_next_btn.setToolTip("Continue to the next step")
+        self.time_step_next_btn.setMinimumHeight(NAV_BTN_HEIGHT_PX)
         self.time_step_next_btn.clicked.connect(lambda: self._advance_time_step(1))
         step_nav.addWidget(self.time_step_next_btn)
         step_nav.addStretch()
@@ -1897,14 +1915,14 @@ class NotionSyncApp(QWidget):
         collapse_row.setContentsMargins(0, 0, 0, 0)
         collapse_row.setSpacing(0)
         collapse_btn = QPushButton()
-        collapse_btn.setFixedSize(36, 36)
+        collapse_btn.setFixedSize(NAV_BTN_HEIGHT_PX, NAV_BTN_HEIGHT_PX)
         collapse_btn.setSizePolicy(collapse_btn.sizePolicy().horizontalPolicy(), collapse_btn.sizePolicy().verticalPolicy())
         # Try to load provided icon
         view_icon_path = resource_path("view_sidebar.png")
         if os.path.exists(view_icon_path):
             try:
                 collapse_btn.setIcon(QIcon(view_icon_path))
-                collapse_btn.setIconSize(QSize(20, 20))
+                collapse_btn.setIconSize(QSize(NAV_ICON_PX, NAV_ICON_PX))
             except Exception:
                 collapse_btn.setText('☰')
         else:
@@ -1932,21 +1950,24 @@ class NotionSyncApp(QWidget):
             sync_icon_path = resource_path('sync.png')
             if os.path.exists(sync_icon_path):
                 btn_assign.setIcon(QIcon(sync_icon_path))
-                btn_assign.setIconSize(QSize(20, 20))  # Match collapse button icon size
+                btn_assign.setIconSize(QSize(NAV_ICON_PX, NAV_ICON_PX))  # Match collapse button icon size
             time_icon_path = resource_path('book_ribbon.png')
             if os.path.exists(time_icon_path):
                 btn_time.setIcon(QIcon(time_icon_path))
-                btn_time.setIconSize(QSize(20, 20))  # Match collapse button icon size
+                btn_time.setIconSize(QSize(NAV_ICON_PX, NAV_ICON_PX))  # Match collapse button icon size
         except Exception:
             pass
 
         for b in (btn_assign, btn_time):
             b.setCheckable(True)
-            b.setFixedHeight(36)  # Match sidebar icon height
-            b.setMinimumWidth(36)  # Minimum width matches icon size when collapsed
+            b.setFixedHeight(NAV_BTN_HEIGHT_PX)  # Match sidebar icon height
+            b.setMinimumWidth(NAV_BTN_HEIGHT_PX)  # Minimum width matches icon-only width
             # Use consistent icon size with collapse button
             text_color = get_nav_text_color(255)
-            b.setStyleSheet(f'text-align: left; padding-left: 8px; font-size: 11px; color: {text_color};')
+            b.setStyleSheet(
+                f'text-align: left; padding: {NAV_BTN_PAD_Y_PX}px {NAV_BTN_PAD_X_PX}px; padding-left: {NAV_TEXT_PAD_LEFT_PX}px; '
+                f'font-size: {NAV_FONT_PX}px; border-radius: {NAV_BTN_RADIUS_PX}px; color: {text_color};'
+            )
             nav_layout.addWidget(b)
             self.nav_buttons.append(b)
 
@@ -1961,8 +1982,8 @@ class NotionSyncApp(QWidget):
         nav_wrapper_layout.setSpacing(0)
         # initial min/max for the nav area so we can animate `maximumWidth`
         # allow the wrapper to shrink to an icon-only width and expand to full width
-        nav_wrapper.setMinimumWidth(72)
-        nav_wrapper.setMaximumWidth(280)
+        nav_wrapper.setMinimumWidth(NAV_SIDEBAR_EXPANDED_MIN_WIDTH_PX)
+        nav_wrapper.setMaximumWidth(NAV_SIDEBAR_EXPANDED_MAX_WIDTH_PX)
         nav_wrapper_layout.addWidget(nav_container)
         top_container_layout.addWidget(nav_wrapper)
         sidebar_layout.addWidget(top_container, alignment=Qt.AlignmentFlag.AlignTop)
@@ -2004,7 +2025,7 @@ class NotionSyncApp(QWidget):
                 pass
 
             current_collapsed = self._sidebar_collapsed
-            collapsed_width = 72
+            collapsed_width = NAV_SIDEBAR_COLLAPSED_WIDTH_PX
 
             if not current_collapsed:
                 # Remember current width for expansion restore.
@@ -2015,11 +2036,17 @@ class NotionSyncApp(QWidget):
 
             expanded_width = getattr(self, '_last_expanded_width', 280)
             if expanded_width < 200:
-                expanded_width = 280
+                expanded_width = NAV_SIDEBAR_EXPANDED_MAX_WIDTH_PX
+            expanded_width = min(expanded_width, NAV_SIDEBAR_EXPANDED_MAX_WIDTH_PX)
 
             seq_group = QSequentialAnimationGroup()
 
             if not current_collapsed:
+                # Allow the width animation to shrink below the expanded minimum.
+                try:
+                    nav_wrapper.setMinimumWidth(collapsed_width)
+                except Exception:
+                    pass
                 # COLLAPSING: fade labels then shrink width.
                 fade_group = QParallelAnimationGroup()
                 for nb in self.nav_buttons:
@@ -2056,8 +2083,12 @@ class NotionSyncApp(QWidget):
 
                 def _on_collapse_finished():
                     self._sidebar_collapsed = True
+                    try:
+                        nav_wrapper.setMinimumWidth(collapsed_width)
+                    except Exception:
+                        pass
                     text_color = get_nav_text_color(255)
-                    style_centered = f'text-align: center; padding: 0px; border: none; font-size: 11px; color: {text_color};'
+                    style_centered = f'text-align: center; padding: 0px; border: none; font-size: {NAV_FONT_PX}px; color: {text_color};'
                     for nb in self.nav_buttons:
                         try:
                             if not hasattr(nb, '_full_text'):
@@ -2066,10 +2097,10 @@ class NotionSyncApp(QWidget):
                             nb.setStyleSheet(style_centered)
                             nb.setToolTip(getattr(nb, '_full_text', ''))
                             # Keep fixed height, set width to match sidebar icon
-                            nb.setFixedHeight(36)
-                            nb.setMinimumWidth(36)
-                            nb.setMaximumWidth(36)
-                            nb.setIconSize(QSize(20, 20))  # Match collapse button icon size
+                            nb.setFixedHeight(NAV_BTN_HEIGHT_PX)
+                            nb.setMinimumWidth(NAV_BTN_HEIGHT_PX)
+                            nb.setMaximumWidth(NAV_BTN_HEIGHT_PX)
+                            nb.setIconSize(QSize(NAV_ICON_PX, NAV_ICON_PX))  # Match collapse button icon size
                         except Exception:
                             pass
                     try:
@@ -2079,10 +2110,10 @@ class NotionSyncApp(QWidget):
                                 sb._full_text = sb.text()
                             sb.setText('')
                             sb.setStyleSheet(style_centered)
-                            sb.setFixedHeight(36)
-                            sb.setMinimumWidth(36)
-                            sb.setMaximumWidth(36)
-                            sb.setIconSize(QSize(20, 20))  # Match collapse button icon size
+                            sb.setFixedHeight(NAV_BTN_HEIGHT_PX)
+                            sb.setMinimumWidth(NAV_BTN_HEIGHT_PX)
+                            sb.setMaximumWidth(NAV_BTN_HEIGHT_PX)
+                            sb.setIconSize(QSize(NAV_ICON_PX, NAV_ICON_PX))  # Match collapse button icon size
                     except Exception:
                         pass
                 seq_group.finished.connect(_on_collapse_finished)
@@ -2090,17 +2121,20 @@ class NotionSyncApp(QWidget):
                 # EXPANDING: prepare labels (transparent) then expand width then fade in.
                 def _prepare():
                     text_color_transparent = get_nav_text_color(0)
-                    style_transparent = f'text-align: left; padding-left: 8px; font-size: 11px; color: {text_color_transparent}; border: none;'
+                    style_transparent = (
+                        f'text-align: left; padding: {NAV_BTN_PAD_Y_PX}px {NAV_BTN_PAD_X_PX}px; padding-left: {NAV_TEXT_PAD_LEFT_PX}px; '
+                        f'font-size: {NAV_FONT_PX}px; border-radius: {NAV_BTN_RADIUS_PX}px; color: {text_color_transparent}; border: none;'
+                    )
                     for nb in self.nav_buttons:
                         try:
                             full = getattr(nb, '_full_text', nb.text())
                             nb.setText(full)
                             nb.setStyleSheet(style_transparent)
                             # Keep fixed height, flexible width
-                            nb.setFixedHeight(36)
-                            nb.setMinimumWidth(36)
+                            nb.setFixedHeight(NAV_BTN_HEIGHT_PX)
+                            nb.setMinimumWidth(NAV_BTN_HEIGHT_PX)
                             nb.setMaximumWidth(16777215)
-                            nb.setIconSize(QSize(20, 20))  # Match collapse button icon size
+                            nb.setIconSize(QSize(NAV_ICON_PX, NAV_ICON_PX))  # Match collapse button icon size
                             if not hasattr(nb, '_fader'):
                                 nb._fader = LabelOpacityHelper(nb)
                             nb._fader._opacity = 0.0
@@ -2112,10 +2146,10 @@ class NotionSyncApp(QWidget):
                             full = getattr(sb, '_full_text', sb.text())
                             sb.setText(full)
                             sb.setStyleSheet(style_transparent)
-                            sb.setFixedHeight(36)
-                            sb.setMinimumWidth(36)
+                            sb.setFixedHeight(NAV_BTN_HEIGHT_PX)
+                            sb.setMinimumWidth(NAV_BTN_HEIGHT_PX)
                             sb.setMaximumWidth(16777215)
-                            sb.setIconSize(QSize(20, 20))  # Match collapse button icon size
+                            sb.setIconSize(QSize(NAV_ICON_PX, NAV_ICON_PX))  # Match collapse button icon size
                             if not hasattr(sb, '_fader'):
                                 sb._fader = LabelOpacityHelper(sb)
                             sb._fader._opacity = 0.0
@@ -2159,6 +2193,7 @@ class NotionSyncApp(QWidget):
                 def _on_expand_finished():
                     self._sidebar_collapsed = False
                     try:
+                        nav_wrapper.setMinimumWidth(NAV_SIDEBAR_EXPANDED_MIN_WIDTH_PX)
                         nav_wrapper.setMaximumWidth(expanded_width)
                     except Exception:
                         pass
@@ -2202,18 +2237,23 @@ class NotionSyncApp(QWidget):
         sidebar_layout.addStretch()
         settings_btn = QPushButton('Settings')
         settings_btn.clicked.connect(lambda: self._open_settings_dialog())
+        settings_btn.setFixedHeight(NAV_BTN_HEIGHT_PX)
+        settings_btn.setMinimumWidth(NAV_BTN_HEIGHT_PX)
         # Load settings icon
         try:
             settings_icon_path = resource_path('settings.png')
             if os.path.exists(settings_icon_path):
                 settings_btn.setIcon(QIcon(settings_icon_path))
-                settings_btn.setIconSize(QSize(18, 18))
+                settings_btn.setIconSize(QSize(NAV_ICON_PX, NAV_ICON_PX))
         except Exception:
             pass
         try:
             # Match nav button font size and color for consistency.
             text_color = get_nav_text_color(255)
-            settings_btn.setStyleSheet(f'text-align: left; padding-left: 8px; font-size: 11px; color: {text_color};')
+            settings_btn.setStyleSheet(
+                f'text-align: left; padding: {NAV_BTN_PAD_Y_PX}px {NAV_BTN_PAD_X_PX}px; padding-left: {NAV_TEXT_PAD_LEFT_PX}px; '
+                f'font-size: {NAV_FONT_PX}px; border-radius: {NAV_BTN_RADIUS_PX}px; color: {text_color};'
+            )
         except Exception:
             pass
         # Add opacity so settings fades with nav
