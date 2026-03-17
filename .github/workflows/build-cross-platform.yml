@@ -50,6 +50,106 @@ jobs:
           cd "$PROJECT_DIR"
           pyinstaller --noconfirm --clean "$(basename "$SPEC_PATH")"
 
+      - name: Import Apple signing certificate
+        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE_BASE64 != '' && secrets.APPLE_CERTIFICATE_PASSWORD != ''
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/build_certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p temp123 "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p temp123 "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k temp123 "$KEYCHAIN_PATH"
+
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Sign macOS app bundle
+        if: runner.os == 'macOS' && secrets.APPLE_SIGNING_IDENTITY != ''
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          APP_PATH="$PROJECT_DIR/dist/NotionSync.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Expected app bundle not found: $APP_PATH"
+            exit 1
+          fi
+
+          ENTITLEMENTS_PATH="$PROJECT_DIR/entitlements.plist"
+          if [ -f "$ENTITLEMENTS_PATH" ]; then
+            codesign --force --deep --options runtime --timestamp \
+              --entitlements "$ENTITLEMENTS_PATH" \
+              --sign "$APPLE_SIGNING_IDENTITY" "$APP_PATH"
+          else
+            codesign --force --deep --options runtime --timestamp \
+              --sign "$APPLE_SIGNING_IDENTITY" "$APP_PATH"
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+      - name: Notarize macOS app bundle
+        if: runner.os == 'macOS' && secrets.APPLE_SIGNING_IDENTITY != '' && secrets.APPLE_NOTARY_KEY_ID != '' && secrets.APPLE_NOTARY_ISSUER_ID != '' && secrets.APPLE_NOTARY_API_KEY_BASE64 != ''
+        shell: bash
+        env:
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_API_KEY_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          APP_PATH="$PROJECT_DIR/dist/NotionSync.app"
+          ZIP_PATH="$RUNNER_TEMP/NotionSync-notarize.zip"
+
+          mkdir -p "$RUNNER_TEMP/notary_keys"
+          KEY_PATH="$RUNNER_TEMP/notary_keys/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+          echo "$APPLE_NOTARY_API_KEY_BASE64" | base64 --decode > "$KEY_PATH"
+
+          xcrun notarytool store-credentials "notary-profile" \
+            --key "$KEY_PATH" \
+            --key-id "$APPLE_NOTARY_KEY_ID" \
+            --issuer "$APPLE_NOTARY_ISSUER_ID"
+
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+          xcrun notarytool submit "$ZIP_PATH" --keychain-profile "notary-profile" --wait
+          xcrun stapler staple "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+
+      - name: Sign Windows executable
+        if: runner.os == 'Windows' && secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != ''
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $certPath = Join-Path $env:RUNNER_TEMP "windows-signing-cert.pfx"
+          [System.IO.File]::WriteAllBytes($certPath, [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+
+          $exePath = Join-Path $env:PROJECT_DIR "dist\NotionSync\NotionSync.exe"
+          if (-not (Test-Path $exePath)) {
+            Write-Error "Expected executable not found: $exePath"
+            exit 1
+          }
+
+          $signtool = "${env:ProgramFiles(x86)}\Windows Kits\10\App Certification Kit\signtool.exe"
+          if (-not (Test-Path $signtool)) {
+            $signtool = "${env:ProgramFiles(x86)}\Windows Kits\10\bin\x64\signtool.exe"
+          }
+          if (-not (Test-Path $signtool)) {
+            Write-Error "signtool.exe not found on runner"
+            exit 1
+          }
+
+          & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $certPath /p $env:WINDOWS_CERTIFICATE_PASSWORD $exePath
+          & $signtool verify /pa /v $exePath
+
       - name: Archive build output
         shell: bash
         run: |
@@ -60,13 +160,22 @@ jobs:
 
           project_dir = pathlib.Path(os.environ["PROJECT_DIR"])
           dist_dir = project_dir / "dist"
-          bundle_dir = dist_dir / "NotionSync"
-          if not bundle_dir.exists():
-              raise SystemExit(f"Expected build output not found: {bundle_dir}")
-
           runner_os = os.environ.get("RUNNER_OS", "Unknown")
           archive_base = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / f"NotionSync-{runner_os}"
-          shutil.make_archive(str(archive_base), "zip", root_dir=dist_dir, base_dir="NotionSync")
+
+          app_bundle = dist_dir / "NotionSync.app"
+          folder_bundle = dist_dir / "NotionSync"
+          if app_bundle.exists():
+              # Preserve app bundle metadata with keepParent.
+              import subprocess
+              subprocess.check_call([
+                  "ditto", "-c", "-k", "--keepParent",
+                  str(app_bundle), f"{archive_base}.zip"
+              ])
+          elif folder_bundle.exists():
+              shutil.make_archive(str(archive_base), "zip", root_dir=dist_dir, base_dir="NotionSync")
+          else:
+              raise SystemExit("Expected build output not found in dist/ (NotionSync.app or NotionSync)")
           print(f"Created: {archive_base}.zip")
           PY
 

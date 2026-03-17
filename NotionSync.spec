@@ -44,6 +44,10 @@ icon_path = None
 if sys.platform == 'darwin' and _existing('icon.icns'):
     icon_path = 'icon.icns'
 
+entitlements_path = None
+if sys.platform == 'darwin' and _existing('entitlements.plist'):
+    entitlements_path = 'entitlements.plist'
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -59,7 +63,7 @@ exe = EXE(
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
-    entitlements_file=None,
+    entitlements_file=entitlements_path,
     icon=icon_path,
 )
 coll = COLLECT(
@@ -78,5 +82,5 @@ if sys.platform == 'darwin':
         coll,
         name='NotionSync.app',
         icon=app_icon,
-        bundle_identifier=None,
+        bundle_identifier='com.fcanas.notionsync',
     )

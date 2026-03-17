@@ -232,6 +232,42 @@ How to run it:
 1. Push a tag like `v1.0.0`, or run it manually from the Actions tab.
 2. Download artifacts named `NotionSync-macOS`, `NotionSync-Windows`, and `NotionSync-Linux`.
 
+### macOS Distribution (Gatekeeper, Signing, Notarization)
+
+If a macOS app is unsigned or not notarized, users will see multiple security prompts and may need to manually allow launch in System Settings.
+
+This project supports optional signing/notarization in CI when these repository secrets are configured:
+
+- `APPLE_CERTIFICATE_BASE64`: Base64 of your Developer ID Application `.p12`
+- `APPLE_CERTIFICATE_PASSWORD`: Password for that `.p12`
+- `APPLE_SIGNING_IDENTITY`: Example `Developer ID Application: Your Name (TEAMID)`
+- `APPLE_NOTARY_KEY_ID`: App Store Connect API key ID
+- `APPLE_NOTARY_ISSUER_ID`: App Store Connect issuer ID
+- `APPLE_NOTARY_API_KEY_BASE64`: Base64 content of `AuthKey_<KEY_ID>.p8`
+
+Without those secrets, macOS artifacts are still built but remain unsigned for testing only.
+
+For local unsigned testing on your own machine only (not for distribution):
+
+```bash
+xattr -dr com.apple.quarantine dist/NotionSync.app
+```
+
+### Windows Distribution (SmartScreen and Code Signing)
+
+If your Windows executable is unsigned, users will see a Microsoft Defender SmartScreen warning that the app is unrecognized/unsafe.
+
+This project supports optional Windows signing in CI when these repository secrets are configured:
+
+- `WINDOWS_CERTIFICATE_BASE64`: Base64 of your code-signing `.pfx` file
+- `WINDOWS_CERTIFICATE_PASSWORD`: Password for that `.pfx`
+
+Notes:
+
+- Signed binaries reduce warnings immediately.
+- SmartScreen reputation may still warn at first for a new certificate/app and improves as users download/run it.
+- EV code-signing certificates generally establish trust faster than standard OV certificates.
+
 ---
 
 ## Branches
