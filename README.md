@@ -204,6 +204,34 @@ pyinstaller NotionSync.spec
 ```
 Output: `build/NotionSync/` and `dist/`
 
+### Cross-Platform Builds (macOS, Windows, Linux)
+
+PyInstaller builds are OS-specific, so you must build on each target OS:
+
+- Build on macOS for macOS app bundles
+- Build on Windows for Windows executables
+- Build on Linux for Linux binaries
+
+Local build command on each OS:
+
+```bash
+python -m pip install -r requirements.txt pyinstaller
+pyinstaller --noconfirm --clean NotionSync.spec
+```
+
+### Automated Multi-OS Builds (GitHub Actions)
+
+This repo now includes a matrix workflow at [.github/workflows/build-cross-platform.yml](.github/workflows/build-cross-platform.yml) that builds on:
+
+- `macos-latest`
+- `windows-latest`
+- `ubuntu-latest`
+
+How to run it:
+
+1. Push a tag like `v1.0.0`, or run it manually from the Actions tab.
+2. Download artifacts named `NotionSync-macOS`, `NotionSync-Windows`, and `NotionSync-Linux`.
+
 ---
 
 ## Branches

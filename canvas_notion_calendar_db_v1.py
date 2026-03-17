@@ -69,17 +69,43 @@ def get_canvas_assignments(canvas_key, base_url, buckets=None, selected_course_i
     - Uses a ThreadPoolExecutor to fetch assignments for all courses in parallel.
     - De-duplicates the final list.
     """
-    # Canvas requests need an Authorization header with the user's token
+    # Canvas requests need an Authorization header with the user's token.
+    # Normalize common input issues (whitespace, trailing slash) before requests.
+    canvas_key = (canvas_key or "").strip()
+    base_url = (base_url or "").strip().rstrip('/')
     headers = {"Authorization": f"Bearer {canvas_key}"}
-    # base_url is now passed as an argument
     
     try:
         # 1) Fetch list of courses from Canvas. Caller may provide
         #    `selected_course_ids` to limit which courses we actually process.
         if status_callback:
             status_callback("Fetching courses from Canvas...")
-        courses_resp = requests.get(f"{base_url}/courses", headers=headers, params={"enrollment_state": "active"})
-        courses_resp.raise_for_status()
+        courses_resp = requests.get(
+            f"{base_url}/courses",
+            headers=headers,
+            params={"enrollment_state": "active"},
+            timeout=20,
+        )
+        try:
+            courses_resp.raise_for_status()
+        except requests.exceptions.HTTPError as http_err:
+            code = courses_resp.status_code
+            if status_callback:
+                if code == 401:
+                    status_callback(
+                        "Canvas authentication failed (401 Unauthorized). Check your Canvas API key and Canvas URL in Settings."
+                    )
+                elif code == 403:
+                    status_callback(
+                        "Canvas access denied (403 Forbidden). Your token may not have permission for this institution/account."
+                    )
+                elif code == 404:
+                    status_callback(
+                        "Canvas endpoint not found (404). Verify your Canvas API URL ends with /api/v1 and points to your institution."
+                    )
+                else:
+                    status_callback(f"Canvas returned HTTP {code} while fetching courses.")
+            raise http_err
         courses = courses_resp.json()
         # If caller provided a list of selected_course_ids, filter courses to only those
         if selected_course_ids:
@@ -199,12 +225,32 @@ def get_canvas_courses(canvas_key, base_url, status_callback=None):
     """
     Fetch list of courses from Canvas. Returns list of course dicts or [] on failure.
     """
+    canvas_key = (canvas_key or "").strip()
+    base_url = (base_url or "").strip().rstrip('/')
     headers = {"Authorization": f"Bearer {canvas_key}"}
     try:
         if status_callback:
             status_callback("Fetching courses from Canvas (single-call)...")
-        resp = requests.get(f"{base_url}/courses", headers=headers, params={"enrollment_state": "active", "per_page": 100})
-        resp.raise_for_status()
+        resp = requests.get(
+            f"{base_url}/courses",
+            headers=headers,
+            params={"enrollment_state": "active", "per_page": 100},
+            timeout=20,
+        )
+        try:
+            resp.raise_for_status()
+        except requests.exceptions.HTTPError as http_err:
+            code = resp.status_code
+            if status_callback:
+                if code == 401:
+                    status_callback("Canvas authentication failed (401 Unauthorized). Check API key and URL.")
+                elif code == 403:
+                    status_callback("Canvas access denied (403 Forbidden). Token permissions may be insufficient.")
+                elif code == 404:
+                    status_callback("Canvas endpoint not found (404). Confirm Canvas URL includes /api/v1.")
+                else:
+                    status_callback(f"Canvas returned HTTP {code} while fetching courses.")
+            raise http_err
         courses = resp.json()
         if status_callback:
             status_callback(f"Found {len(courses)} courses.")

@@ -1,0 +1,52 @@
+name: Build Cross-Platform
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build with PyInstaller spec
+        run: pyinstaller --noconfirm --clean NotionSync.spec
+
+      - name: Archive build output (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/NotionSync/* -DestinationPath NotionSync-windows.zip
+
+      - name: Archive build output (macOS/Linux)
+        if: runner.os != 'Windows'
+        run: |
+          cd dist
+          zip -r ../NotionSync-${{ runner.os }}.zip NotionSync
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NotionSync-${{ runner.os }}
+          path: |
+            NotionSync-*.zip
