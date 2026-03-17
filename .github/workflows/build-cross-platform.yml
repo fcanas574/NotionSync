@@ -19,34 +19,60 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Locate project directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          SPEC_PATH="$(find "$GITHUB_WORKSPACE" -type f -name 'NotionSync.spec' | head -n 1)"
+          if [ -z "$SPEC_PATH" ]; then
+            echo "NotionSync.spec not found anywhere in checkout"
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "$SPEC_PATH")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "SPEC_PATH=$SPEC_PATH" >> "$GITHUB_ENV"
+          echo "Using spec: $SPEC_PATH"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pyinstaller
+          python -m pip install -r "$PROJECT_DIR/requirements.txt" pyinstaller
 
       - name: Build with PyInstaller spec
-        run: pyinstaller --noconfirm --clean NotionSync.spec
-
-      - name: Archive build output (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+        shell: bash
         run: |
-          Compress-Archive -Path dist/NotionSync/* -DestinationPath NotionSync-windows.zip
+          cd "$PROJECT_DIR"
+          pyinstaller --noconfirm --clean "$(basename "$SPEC_PATH")"
 
-      - name: Archive build output (macOS/Linux)
-        if: runner.os != 'Windows'
+      - name: Archive build output
+        shell: bash
         run: |
-          cd dist
-          zip -r ../NotionSync-${{ runner.os }}.zip NotionSync
+          python - <<'PY'
+          import os
+          import pathlib
+          import shutil
+
+          project_dir = pathlib.Path(os.environ["PROJECT_DIR"])
+          dist_dir = project_dir / "dist"
+          bundle_dir = dist_dir / "NotionSync"
+          if not bundle_dir.exists():
+              raise SystemExit(f"Expected build output not found: {bundle_dir}")
+
+          runner_os = os.environ.get("RUNNER_OS", "Unknown")
+          archive_base = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / f"NotionSync-{runner_os}"
+          shutil.make_archive(str(archive_base), "zip", root_dir=dist_dir, base_dir="NotionSync")
+          print(f"Created: {archive_base}.zip")
+          PY
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: NotionSync-${{ runner.os }}
           path: |
-            NotionSync-*.zip
+            ${{ github.workspace }}/NotionSync-*.zip
